@@ -22,7 +22,10 @@ jobs:
       - run: forge fmt --check
       - run: forge lint
       - run: forge test -vvv --no-match-path 'test/fork/**'
-      - run: forge snapshot --check --tolerance 5
+      # Snapshot entries for invariant runs are not gas numbers, and the fork suite is skipped here: check the rest,
+      # under the profile the committed file was generated with.
+      - run: forge snapshot --check --tolerance 5 --no-match-path 'test/fork/**' --no-match-contract Invariant
+        env: { FOUNDRY_PROFILE: default }
       - run: forge coverage --report lcov --report-file lcov.info --no-match-path 'test/fork/**'
       - uses: actions/upload-artifact@v4
         with: { name: lcov, path: lcov.info }
@@ -34,8 +37,11 @@ jobs:
         with: { submodules: recursive }
       - uses: foundry-rs/foundry-toolchain@v1
         with: { version: v1.8.1 }
+      # Build here with the pinned forge: the action's container installs its own, whose lint fails the build.
+      - run: forge build --build-info
       - uses: crytic/slither-action@v0.4.1
         with:
+          ignore-compile: true
           fail-on: medium              # documented false positives live in slither.config.json
           slither-config: slither.config.json
 
@@ -46,8 +52,9 @@ jobs:
         with: { submodules: recursive }
       - uses: foundry-rs/foundry-toolchain@v1
         with: { version: v1.8.1 }
-      - run: curl -L https://raw.githubusercontent.com/Cyfrin/up/main/install | bash && ~/.cyfrin/bin/cyfrinup
-      - run: ~/.cyfrin/bin/aderyn .
+      - run: |                       # pinned release; cyfrinup installs to a path that is not on the runner's PATH
+          curl -sSL https://github.com/Cyfrin/aderyn/releases/download/aderyn-v0.6.8/aderyn-x86_64-unknown-linux-gnu.tar.xz | tar -xJ
+          aderyn-x86_64-unknown-linux-gnu/aderyn .
       - uses: actions/upload-artifact@v4
         with: { name: aderyn-report, path: report.md }
       - run: '! grep -q "^## High Issues" report.md'   # blocking on High until a native fail flag is confirmed
@@ -57,7 +64,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: gitleaks/gitleaks-action@v2
+      - run: |                       # the gitleaks-action needs a paid licence for organisation repos; the CLI does not
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz | tar -xz gitleaks
+          ./gitleaks git --redact --no-banner --exit-code 1
 
   fork:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'

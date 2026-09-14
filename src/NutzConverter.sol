@@ -326,6 +326,8 @@ contract NutzConverter is Signers, ReentrancyGuard, IUnlockCallback {
 
         uint256 ethIn = address(this).balance;
         if (ethIn > MAX_SWEEP_ETH) ethIn = MAX_SWEEP_ETH;
+        // "Is there anything to sweep": a stray wei only makes a tiny Sweep run, it decides nothing else.
+        // slither-disable-next-line incorrect-equality
         if (ethIn == 0) revert NothingToSweep();
         uint256 opsAmt = _fundOps(ethIn);
         uint256 usdgOut = _ethToUsdg(routes[1], ethIn - opsAmt);
@@ -412,6 +414,8 @@ contract NutzConverter is Signers, ReentrancyGuard, IUnlockCallback {
     // forge-lint: disable-next-item(reentrancy-events)
     function _sellNutz(Route calldata route) private {
         uint256 nutzIn = IERC20(nutz).balanceOf(address(this));
+        // "Is there anything to sell": a stray unit only makes a tiny sale run, it decides nothing else.
+        // slither-disable-next-line incorrect-equality
         if (nutzIn == 0) return;
         (bool ok, uint256 ethOut, bytes memory reason) = _runLeg(Leg.NutzToEth, route, nutzIn);
         if (ok) emit NutzSold(nutzIn, ethOut);
@@ -594,6 +598,8 @@ contract NutzConverter is Signers, ReentrancyGuard, IUnlockCallback {
         address first = address(bytes20(path[:V3_ADDRESS_BYTES]));
         address last = address(bytes20(path[path.length - V3_ADDRESS_BYTES:]));
         if (first != _v3Token(tokenIn) || last != _v3Token(tokenOut)) revert BadPath();
+        // A zero input is a legal no-op (an empty Slice), not a balance comparison.
+        // slither-disable-next-line incorrect-equality
         if (amountIn == 0) {
             ok = true; // nothing to swap
             return (ok, 0, "");
@@ -627,6 +633,8 @@ contract NutzConverter is Signers, ReentrancyGuard, IUnlockCallback {
         bool zeroForOne = tokenIn < tokenOut;
         (address c0, address c1) = zeroForOne ? (tokenIn, tokenOut) : (tokenOut, tokenIn);
         if (Currency.unwrap(key.currency0) != c0 || Currency.unwrap(key.currency1) != c1) revert BadPoolKey();
+        // A zero input is a legal no-op (an empty Slice), not a balance comparison.
+        // slither-disable-next-line incorrect-equality
         if (amountIn == 0) {
             ok = true; // nothing to swap
             return (ok, 0, "");
