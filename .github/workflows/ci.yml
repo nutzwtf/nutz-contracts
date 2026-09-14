@@ -23,9 +23,10 @@ jobs:
       - run: forge lint
       - run: forge test -vvv --no-match-path 'test/fork/**'
       # Snapshot entries for invariant runs are not gas numbers, and the fork suite is skipped here: check the rest,
-      # under the profile the committed file was generated with.
+      # under the profile and fuzz seed the committed file was generated with (a random seed moves fuzz medians
+      # by more than the tolerance).
       - run: forge snapshot --check --tolerance 5 --no-match-path 'test/fork/**' --no-match-contract Invariant
-        env: { FOUNDRY_PROFILE: default }
+        env: { FOUNDRY_PROFILE: default, FOUNDRY_FUZZ_SEED: "0x1" }
       - run: forge coverage --report lcov --report-file lcov.info --no-match-path 'test/fork/**'
       - uses: actions/upload-artifact@v4
         with: { name: lcov, path: lcov.info }
@@ -38,7 +39,8 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with: { version: v1.8.1 }
       # Build here with the pinned forge: the action's container installs its own, whose lint fails the build.
-      - run: forge build --build-info
+      # Contracts only, and without the dynamic test linker, whose synthetic files crytic-compile cannot resolve.
+      - run: forge build --build-info --no-dynamic-test-linking --skip './test/**' './script/**'
       - uses: crytic/slither-action@v0.4.1
         with:
           ignore-compile: true
