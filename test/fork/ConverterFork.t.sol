@@ -7,6 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {Deploy} from "../../script/Deploy.s.sol";
 import {NutzDistributor} from "../../src/NutzDistributor.sol";
 import {NutzConverter} from "../../src/NutzConverter.sol";
 
@@ -38,7 +39,7 @@ interface IV4Quoter {
 }
 
 /// @dev The hourly Sweep against the real Venues and tokens on Robinhood Chain (spec §10). The Distributor and the
-///      Converter are deployed as the script does it with the addresses in script/config/robinhood.json; ETH worth
+///      Converter are deployed by the deploy script from script/config/robinhood.json (test Signers and Keeper); ETH worth
 ///      about $1k, $10k and $50k is dealt to the unbound Converter; one Sweep per size runs with the Keeper's policy
 ///      Routes (`minOut` = quote × 0.99); every Leg's realised output must sit within 1% of the v3 Quoter's figure
 ///      and cost at most `MAX_SLIPPAGE_BPS` against a $100 trade in the same v3 pool; the Distributor must hold
@@ -111,23 +112,18 @@ contract ConverterForkTest is Test {
         if (blockNumber == 0) vm.createSelectFork(url);
         else vm.createSelectFork(url, blockNumber);
 
-        (NutzConverter.Params memory p, DistributorArgs memory dp) = _load();
+        Deploy script = new Deploy();
+        Deploy.Params memory p = script.load(string.concat(vm.projectRoot(), "/script/config/robinhood.json"));
+        p.signers = [makeAddr("signer-a"), makeAddr("signer-b"), makeAddr("signer-c")];
+        p.keeper = keeper;
+        tok = p.tokens;
+        usdg = tok[4];
+        weth = IERC20(p.weth);
+        v3Router = p.v3Router;
+        v4PoolManager = p.v4PoolManager;
+        opsCap = p.opsCapWei;
         vm.deal(keeper, 0);
-        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
-        d = new NutzDistributor(
-            p.signers,
-            keeper,
-            predicted,
-            p.tokens,
-            dp.pushGasBase,
-            dp.pushGasPerLeaf,
-            dp.minUsdgPerEth,
-            dp.maxUsdgPerEth,
-            dp.excludedBase
-        );
-        p.distributor = address(d);
-        c = new NutzConverter(p);
-        assertEq(address(c), predicted, "Converter must land on the predicted address");
+        (d, c) = script.deploy(p, address(script));
     }
 
     // ---- the runs ----
@@ -375,48 +371,5 @@ contract ConverterForkTest is Test {
         if (first == address(usdg)) return amountIn / 1e6 + 1;
         (uint256 usdgOut,,,) = V3_QUOTER.quoteExactInput(_ethUsdgPath(), amountIn);
         return usdgOut / 1e6 + 1;
-    }
-
-    // ---- config ----
-
-    /// @dev The Distributor's own constructor arguments from the deploy config.
-    struct DistributorArgs {
-        uint256 pushGasBase;
-        uint256 pushGasPerLeaf;
-        uint256 minUsdgPerEth;
-        uint256 maxUsdgPerEth;
-        address[] excludedBase;
-    }
-
-    /// @dev Both contracts' constructor arguments from the deploy config, with test Signers and Keeper and the
-    ///      Distributor's address left for `setUp` to fill in.
-    function _load() internal returns (NutzConverter.Params memory p, DistributorArgs memory dp) {
-        string memory json = vm.readFile(string.concat(vm.projectRoot(), "/script/config/robinhood.json"));
-        dp.pushGasBase = vm.parseJsonUint(json, ".pushGasBase");
-        dp.pushGasPerLeaf = vm.parseJsonUint(json, ".pushGasPerLeaf");
-        dp.minUsdgPerEth = vm.parseJsonUint(json, ".minUsdgPerEth");
-        dp.maxUsdgPerEth = vm.parseJsonUint(json, ".maxUsdgPerEth");
-        dp.excludedBase = vm.parseJsonAddressArray(json, ".excludedBase");
-
-        string[5] memory keys = ["spy", "nvda", "mu", "spcx", "usdg"];
-        for (uint256 i = 0; i < 5; i++) {
-            tok[i] = IERC20(vm.parseJsonAddress(json, string.concat(".tokens.", keys[i])));
-        }
-        usdg = tok[4];
-        weth = IERC20(vm.parseJsonAddress(json, ".weth"));
-        v3Router = vm.parseJsonAddress(json, ".v3Router");
-        v4PoolManager = vm.parseJsonAddress(json, ".v4PoolManager");
-        opsCap = vm.parseJsonUint(json, ".opsCapWei");
-
-        p.signers = [makeAddr("signer-a"), makeAddr("signer-b"), makeAddr("signer-c")];
-        p.keeper = keeper;
-        p.tokens = tok;
-        p.weth = address(weth);
-        p.v3Router = v3Router;
-        p.v4PoolManager = v4PoolManager;
-        p.ponsFactory = vm.parseJsonAddress(json, ".ponsFactory");
-        p.ponsEscrow = vm.parseJsonAddress(json, ".ponsEscrow");
-        p.ponsHook = vm.parseJsonAddress(json, ".ponsHook");
-        p.opsCap = opsCap;
     }
 }
