@@ -22,11 +22,10 @@ jobs:
       - run: forge fmt --check
       - run: forge lint
       - run: forge test -vvv --no-match-path 'test/fork/**'
-      # Snapshot entries for invariant runs are not gas numbers, and the fork suite is skipped here: check the rest,
-      # under the profile and fuzz seed the committed file was generated with (a random seed moves fuzz medians
-      # by more than the tolerance).
-      - run: forge snapshot --check --tolerance 5 --no-match-path 'test/fork/**' --no-match-contract Invariant
-        env: { FOUNDRY_PROFILE: default, FOUNDRY_FUZZ_SEED: "0x1" }
+      # Gas regression gate on the deterministic unit tests only: fuzz medians move between machines even with a
+      # fixed seed, invariant entries are run counts, and the fork suite is skipped here. Same filters regenerate
+      # the committed file.
+      - run: forge snapshot --check --tolerance 5 --no-match-path 'test/fork/**' --no-match-test testFuzz --no-match-contract Invariant
       - run: forge coverage --report lcov --report-file lcov.info --no-match-path 'test/fork/**'
       - uses: actions/upload-artifact@v4
         with: { name: lcov, path: lcov.info }
