@@ -1,0 +1,15 @@
+{
+  "name": "nutz-tooling",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Generates test/fixtures/*.json with @openzeppelin/merkle-tree (ADR-0001). Never run by forge test.",
+  "scripts": {
+    "gen:fixtures": "node src/gen-fixtures.ts",
+    "verify-leaf": "node src/verify-leaf.ts"
+  },
+  "dependencies": {
+    "@openzeppelin/merkle-tree": "1.0.8",
+    "viem": "^2.21.0"
+  }
+}

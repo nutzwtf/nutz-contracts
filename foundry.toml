@@ -1,0 +1,48 @@
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.37"          # exact pin; bump deliberately
+evm_version = "prague"           # confirmed live on chain 4663 (ArbOS 61): TSTORE, MCOPY, CLZ, EIP-2537
+optimizer = true
+optimizer_runs = 10_000          # claim/push paths run many times; favour runtime gas
+via_ir = false
+deny = "warnings"
+ffi = false                      # never enable in this repo; see ADR-0001
+fs_permissions = [{ access = "read", path = "./test/fixtures" }, { access = "read", path = "./script/config" }]
+
+[profile.default.fuzz]
+runs = 1_000
+
+[profile.default.invariant]
+runs = 256
+depth = 100
+fail_on_revert = true            # handlers must bound inputs; a revert is a handler bug
+
+[profile.ci]                     # FOUNDRY_PROFILE=ci in GitHub Actions
+[profile.ci.fuzz]
+runs = 10_000
+[profile.ci.invariant]
+runs = 1_000
+depth = 200
+
+[profile.default.coverage]
+exclude_tests = true
+skip_files = ["script/**", "src/vendor/**"]
+
+[lint]
+severity = ["high", "med", "low", "info", "gas"]
+ignore = ["test/**/*.sol"]   # test code is not deployed; src/ and script/ are linted on every build
+
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+
+[rpc_endpoints]
+robinhood = "${RPC_4663}"                 # Chainstack archive, from .env
+robinhood_public = "${RPC_4663_PUBLIC}"   # rate-limited, 2,000-block eth_getLogs cap
+robinhood_testnet = "${RPC_46630}"        # chain 46630; no Pons / Stock Tokens there

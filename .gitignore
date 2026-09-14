@@ -1,0 +1,25 @@
+# agent tooling (local only)
+.claude
+.agents
+docs/agents
+CLAUDE.md
+skills-lock.json
+.scratch
+
+# secrets
+.env
+# per-machine mise config (the gh account for this repo)
+.mise.local.toml
+.env.*
+!.env.example
+
+# foundry
+out/
+cache/
+lcov.info
+
+# analyzers
+report.md
+
+# tooling/
+node_modules/

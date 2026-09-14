@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+set -e
+forge fmt --check
+gitleaks git --pre-commit --staged --redact

@@ -1,0 +1,30 @@
+{
+  "_comment": "Chain 4663 deploy parameters. TODO before launch: signers, keeper, gas constants from the week-2 fork measurement, excludedBase (Pons contracts; the v4 pool is appended at graduation). MU and SPCX symbols and decimals verified on chain 2026-09-13; a human still confirms both are StockFactory beacon proxies on Blockscout.",
+  "excludedBase": [
+    "0x000000000000000000000000000000000000dEaD"
+  ],
+  "keeper": "0x0000000000000000000000000000000000000000",
+  "maxUsdgPerEth": "10000000000",
+  "minUsdgPerEth": "1000000000",
+  "opsCapWei": "500000000000000000",
+  "ponsEscrow": "0xd3AFEB2a57f70eF218Aa82451c51B2fb0416Ac9e",
+  "ponsFactory": "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e",
+  "ponsHook": "0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044",
+  "pushGasBase": 100000,
+  "pushGasPerLeaf": 40000,
+  "signers": [
+    "0x0000000000000000000000000000000000000000",
+    "0x0000000000000000000000000000000000000000",
+    "0x0000000000000000000000000000000000000000"
+  ],
+  "tokens": {
+    "mu": "0xfF080c8ce2E5feadaCa0Da81314Ae59D232d4afD",
+    "nvda": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+    "spcx": "0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa",
+    "spy": "0x117cc2133c37B721F49dE2A7a74833232B3B4C0C",
+    "usdg": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"
+  },
+  "v3Router": "0xCaf681a66D020601342297493863E78C959E5cb2",
+  "v4PoolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+  "weth": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
+}

@@ -1,0 +1,74 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * *"          # nightly fork tests
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: foundry-rs/foundry-toolchain@v1
+        with: { version: v1.8.1 }
+      - run: forge --version
+      - run: forge build --sizes
+      - run: forge fmt --check
+      - run: forge lint
+      - run: forge test -vvv --no-match-path 'test/fork/**'
+      - run: forge snapshot --check --tolerance 5
+      - run: forge coverage --report lcov --report-file lcov.info --no-match-path 'test/fork/**'
+      - uses: actions/upload-artifact@v4
+        with: { name: lcov, path: lcov.info }
+
+  slither:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: foundry-rs/foundry-toolchain@v1
+        with: { version: v1.8.1 }
+      - uses: crytic/slither-action@v0.4.1
+        with:
+          fail-on: medium              # documented false positives live in slither.config.json
+          slither-config: slither.config.json
+
+  aderyn:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: foundry-rs/foundry-toolchain@v1
+        with: { version: v1.8.1 }
+      - run: curl -L https://raw.githubusercontent.com/Cyfrin/up/main/install | bash && ~/.cyfrin/bin/cyfrinup
+      - run: ~/.cyfrin/bin/aderyn .
+      - uses: actions/upload-artifact@v4
+        with: { name: aderyn-report, path: report.md }
+      - run: '! grep -q "^## High Issues" report.md'   # blocking on High until a native fail flag is confirmed
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+
+  fork:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    env:
+      RPC_4663: ${{ secrets.RPC_4663 }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: foundry-rs/foundry-toolchain@v1
+        with: { version: v1.8.1 }
+      # --fork-url resolves RPC_4663 before any test runs, so an empty secret would abort instead of self-skipping.
+      - if: env.RPC_4663 != ''
+        run: forge test -vvv --match-path 'test/fork/**' --fork-url robinhood --fork-retry-backoff 1000
