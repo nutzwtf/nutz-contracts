@@ -147,6 +147,8 @@ contract NutzDistributor is Signers, ReentrancyGuard, INutzDistributor {
     event AcornPulled(uint256 indexed drawId, uint256 usdg);
     event DrawFunded(uint256 indexed drawId, uint256[5] amounts);
     event DrawContractSet(address indexed draw);
+    /// @notice `account` counts as Excluded from the Epoch containing this block on; emitted for every base entry at
+    ///         construction and for every executed append.
     event ExcludedAppended(address indexed account);
 
     // -------------------------------------------------------------- modifiers
@@ -182,6 +184,11 @@ contract NutzDistributor is Signers, ReentrancyGuard, INutzDistributor {
         minUsdgPerEth = minRate_;
         maxUsdgPerEth = maxRate_;
         excludedList = excludedBase_;
+        // The base list is announced the same way appends are, so the indexer rebuilds any Epoch's Excluded set
+        // from `ExcludedAppended` alone (engineering-spec §4.2).
+        for (uint256 i = 0; i < excludedBase_.length; i++) {
+            emit ExcludedAppended(excludedBase_[i]);
+        }
         // The skip loop in postRoot never walks periods that predate the contract.
         epochBook.rootedThrough = currentEpoch() - 1;
         drawBook.rootedThrough = currentDraw() - 1;

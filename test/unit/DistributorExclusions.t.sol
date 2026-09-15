@@ -13,6 +13,29 @@ contract DistributorExclusionsTest is DistributorBase {
         d.proposeExclusion(account, sign(KEY_B, sh), sign(KEY_C, sh));
     }
 
+    function test_constructor_emitsTheBaseListSoTheLogStreamIsSelfSufficient() public {
+        // the indexer rebuilds every Epoch's Excluded set from `ExcludedAppended` alone (engineering-spec §4.2)
+        address[] memory base = new address[](2);
+        base[0] = dead;
+        base[1] = converter;
+        vm.expectEmit();
+        emit NutzDistributor.ExcludedAppended(dead);
+        vm.expectEmit();
+        emit NutzDistributor.ExcludedAppended(converter);
+        NutzDistributor fresh = new NutzDistributor(
+            [vm.addr(KEY_A), vm.addr(KEY_B), vm.addr(KEY_C)],
+            keeper,
+            converter,
+            tokens(),
+            100_000,
+            40_000,
+            1_000e6,
+            10_000e6,
+            base
+        );
+        assertEq(fresh.excluded().length, 2);
+    }
+
     function test_exclusion_isAppendedAfter48h() public {
         bytes32 id = keccak256(abi.encode(APPEND_EXCLUDED_TYPEHASH, cex));
         proposeExclusion(cex);
