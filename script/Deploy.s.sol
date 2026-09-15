@@ -5,18 +5,22 @@ import {Script, console} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {NutzDistributor} from "../src/NutzDistributor.sol";
 import {NutzConverter} from "../src/NutzConverter.sol";
+import {NutzDraw} from "../src/NutzDraw.sol";
 import {Signers} from "../src/Signers.sol";
 
 /// @notice Deploys the Nut Vault. The Distributor's CONVERTER is immutable and the Converter takes the
 ///         Distributor's address in its constructor, so the Converter's address is predicted from the
 ///         deployer's next nonce, the Converter is deployed right after the Distributor, and the prediction
-///         is asserted (engineering-spec §10, ADR-0003).
+///         is asserted (engineering-spec §10, ADR-0003). The Draw follows: nothing on the Distributor names it at
+///         construction, the Signers wire it later through `proposeDrawContract` / `executeDrawContract` (48h),
+///         and its constructor self-test proves the EIP-2537 precompiles are live on the target chain (ADR-0004).
 ///
 ///   forge script script/Deploy.s.sol --rpc-url robinhood --account nutz-dev --broadcast --verify \
 ///     --verifier blockscout --verifier-url https://robinhoodchain.blockscout.com/api/
 ///
 ///   Launch day (engineering-spec §10): after `launchAndBuy` names the Converter as creator fee recipient, the
-///   Keeper calls `converter.bindNutz(NUTZ)`; the Sweep pulls no Pons fees until then.
+///   Keeper calls `converter.bindNutz(NUTZ)`; the Sweep pulls no Pons fees until then. Before the first Sunday the
+///   Signers `proposeDrawContract(draw)` and, 48 hours later, anyone `executeDrawContract(draw)`.
 contract Deploy is Script {
     struct Params {
         address[3] signers;
@@ -43,17 +47,23 @@ contract Deploy is Script {
         Params memory p = load(string.concat(vm.projectRoot(), "/script/config/robinhood.json"));
         address deployer = msg.sender; // the --account / --sender forge broadcasts with
         vm.startBroadcast();
-        (NutzDistributor d, NutzConverter c) = deploy(p, deployer);
+        (NutzDistributor d, NutzConverter c, NutzDraw draw) = deploy(p, deployer);
         vm.stopBroadcast();
         console.log("NutzDistributor", address(d));
         console.log("NutzConverter", address(c));
+        console.log("NutzDraw", address(draw));
         console.log("After launchAndBuy, the Keeper binds NUTZ: converter.bindNutz(NUTZ)");
+        console.log("Before the first Sunday, the Signers wire the Draw: proposeDrawContract, 48h, executeDrawContract");
     }
 
     /// @dev Deploys the Distributor with the Converter address `deployer` will get on its next CREATE, then the
     ///      Converter itself, and checks that it landed there and that both contracts carry the same Signers and
-    ///      Keeper. Two consecutive transactions from `deployer`; nothing else may slip in between.
-    function deploy(Params memory p, address deployer) public returns (NutzDistributor d, NutzConverter c) {
+    ///      Keeper. Two consecutive transactions from `deployer`; nothing else may slip in between. The Draw comes
+    ///      third and reverts `VerifierSelfTestFailed` on a chain without the EIP-2537 precompiles.
+    function deploy(Params memory p, address deployer)
+        public
+        returns (NutzDistributor d, NutzConverter c, NutzDraw draw)
+    {
         address predictedConverter = vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 1);
         d = new NutzDistributor(
             p.signers,
@@ -83,6 +93,7 @@ contract Deploy is Script {
         );
         check(predictedConverter, address(c));
         checkRoles(d, c);
+        draw = new NutzDraw(address(d));
     }
 
     function check(address predicted, address actual) public pure {

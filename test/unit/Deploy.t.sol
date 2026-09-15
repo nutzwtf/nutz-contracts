@@ -6,6 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Deploy} from "../../script/Deploy.s.sol";
 import {NutzDistributor} from "../../src/NutzDistributor.sol";
 import {NutzConverter} from "../../src/NutzConverter.sol";
+import {NutzDraw} from "../../src/NutzDraw.sol";
 import {Signers} from "../../src/Signers.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockSwapRouter02} from "../mocks/MockSwapRouter02.sol";
@@ -42,14 +43,21 @@ contract DeployTest is Test {
     }
 
     function test_deploy_converterLandsOnTheDistributorsImmutable() public {
-        (NutzDistributor d, NutzConverter c) = script.deploy(params(), address(script));
+        (NutzDistributor d, NutzConverter c,) = script.deploy(params(), address(script));
         assertEq(d.CONVERTER(), address(c), "the Distributor names the Converter that was deployed");
         assertEq(address(c.DISTRIBUTOR()), address(d), "the Converter names the Distributor");
     }
 
+    function test_deploy_drawNamesTheDistributor() public {
+        // the Draw's constructor self-test runs against the local prague precompiles here
+        (NutzDistributor d,, NutzDraw draw) = script.deploy(params(), address(script));
+        assertEq(address(draw.DISTRIBUTOR()), address(d), "the Draw names the Distributor");
+        assertEq(address(d.drawContract()), address(0), "wiring is the Signers' timelocked step, not the script's");
+    }
+
     function test_deploy_wiresTheConverterFromTheParams() public {
         Deploy.Params memory p = params();
-        (, NutzConverter c) = script.deploy(p, address(script));
+        (, NutzConverter c,) = script.deploy(p, address(script));
         assertEq(c.WETH(), p.weth);
         assertEq(address(c.V3_ROUTER()), p.v3Router);
         assertEq(address(c.V4_POOL_MANAGER()), p.v4PoolManager);
@@ -64,7 +72,7 @@ contract DeployTest is Test {
 
     function test_deploy_bothContractsShareSignersAndKeeper() public {
         Deploy.Params memory p = params();
-        (NutzDistributor d, NutzConverter c) = script.deploy(p, address(script));
+        (NutzDistributor d, NutzConverter c,) = script.deploy(p, address(script));
         for (uint256 i = 0; i < 3; i++) {
             assertEq(d.signers(i), p.signers[i]);
             assertEq(c.signers(i), p.signers[i]);
@@ -91,18 +99,18 @@ contract DeployTest is Test {
 
     function test_checkRoles_revertsWhenTheKeepersDiffer() public {
         Deploy.Params memory p = params();
-        (NutzDistributor d,) = script.deploy(p, address(script));
+        (NutzDistributor d,,) = script.deploy(p, address(script));
         p.keeper = makeAddr("other-keeper");
-        (, NutzConverter c) = script.deploy(p, address(script));
+        (, NutzConverter c,) = script.deploy(p, address(script));
         vm.expectRevert(abi.encodeWithSelector(Deploy.RolesDiffer.selector, address(d), address(c)));
         script.checkRoles(Signers(address(d)), Signers(address(c)));
     }
 
     function test_checkRoles_revertsWhenASignerDiffers() public {
         Deploy.Params memory p = params();
-        (NutzDistributor d,) = script.deploy(p, address(script));
+        (NutzDistributor d,,) = script.deploy(p, address(script));
         p.signers[2] = makeAddr("other-signer");
-        (, NutzConverter c) = script.deploy(p, address(script));
+        (, NutzConverter c,) = script.deploy(p, address(script));
         vm.expectRevert(abi.encodeWithSelector(Deploy.RolesDiffer.selector, address(d), address(c)));
         script.checkRoles(Signers(address(d)), Signers(address(c)));
     }

@@ -123,7 +123,7 @@ contract ConverterForkTest is Test {
         v4PoolManager = p.v4PoolManager;
         opsCap = p.opsCapWei;
         vm.deal(keeper, 0);
-        (d, c) = script.deploy(p, address(script));
+        (d, c,) = script.deploy(p, address(script));
     }
 
     // ---- the runs ----
