@@ -3,12 +3,13 @@ pragma solidity 0.8.37;
 
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {IKeeper} from "./interfaces/IKeeper.sol";
 
 /// @title Signers
 /// @notice Three Signers, any two of which approve every privileged action by signing EIP-712 typed data
 ///         that carries one global nonce. Also holds the Keeper address and a 48-hour timelock queue.
 /// @dev Abstract: the inheriting contract defines its actions and calls `_require2of3` with the struct hash.
-abstract contract Signers is EIP712 {
+abstract contract Signers is EIP712, IKeeper {
     error ZeroAddress();
     error DuplicateSigner();
     error NotSigner(address recovered);
@@ -36,7 +37,7 @@ abstract contract Signers is EIP712 {
 
     address[3] public signers;
     uint256 public nonce;
-    address public keeper;
+    address public override keeper;
     /// @notice Timestamp from which a scheduled action id may be executed; 0 when nothing is scheduled.
     mapping(bytes32 id => uint256) public readyAt;
 
