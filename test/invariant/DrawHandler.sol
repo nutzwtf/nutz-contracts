@@ -31,6 +31,7 @@ contract DrawHandler is Test {
     uint64 public ghostMaxRound; // the highest round any successful request committed to
     bool public ghostRoundDecreased; // a re-request committed to a lower round
     bool public ghostFulfilledChanged; // a call touched a fulfilled draw
+    bool public ghostDueRoundReplaced; // a request replaced a round that was already public (F08)
     bool public ghostBadSignatureAccepted; // a tampered or mis-sized signature fulfilled a draw
     bool public ghostStrangerRequested; // a non-Keeper request succeeded
     bool public ghostOpenWeekRequested; // a request for the running week succeeded
@@ -54,11 +55,13 @@ contract DrawHandler is Test {
         uint256 id = _pickId(idSeed);
         count = bound(count, 0, 1_000_000);
         (,, uint64 before, bytes32 seedBefore) = draw.draws(id);
+        bool due = before != 0 && draw.currentRound() >= before;
         vm.prank(keeper);
         try draw.requestDraw(id, root, count) {
+            if (due) ghostDueRoundReplaced = true;
             _recordRequest(id, before, seedBefore);
         } catch (bytes memory reason) {
-            _expectRequestRefusal(reason, root, count, seedBefore);
+            _expectRequestRefusal(reason, root, count, seedBefore, due);
         }
     }
 
@@ -136,10 +139,16 @@ contract DrawHandler is Test {
         }
     }
 
-    function _expectRequestRefusal(bytes memory reason, bytes32 root, uint256 count, bytes32 seedBefore) internal pure {
+    function _expectRequestRefusal(bytes memory reason, bytes32 root, uint256 count, bytes32 seedBefore, bool due)
+        internal
+        pure
+    {
         bytes4 selector = bytes4(reason);
         if (seedBefore != 0) {
             assertEq(selector, NutzDraw.AlreadyFulfilled.selector, "fulfilled draw refused for another reason");
+        } else if (due) {
+            // Review 2026-09, F08: a list whose round is public can only be fulfilled.
+            assertEq(selector, NutzDraw.RoundDue.selector, "due draw refused for another reason");
         } else if (root == 0 || count == 0) {
             assertEq(selector, NutzDraw.NoTickets.selector, "empty list refused for another reason");
         } else {

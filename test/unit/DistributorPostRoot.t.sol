@@ -99,6 +99,14 @@ contract DistributorPostRootTest is DistributorBase {
         d.postRoot(EPOCH, e, ROOT1, zero5(), sign(KEY_A, sh), sign(KEY_B, sh));
     }
 
+    function test_postRoot_futureEpoch_reverts() public {
+        // "Not closed" covers every period from the current one on, not only the current one.
+        uint256 e = d.currentEpoch() + 1;
+        bytes32 sh = postRootHash(EPOCH, e, ROOT1, zero5(), 0);
+        vm.expectRevert(abi.encodeWithSelector(NutzDistributor.PeriodNotClosed.selector, e));
+        d.postRoot(EPOCH, e, ROOT1, zero5(), sign(KEY_A, sh), sign(KEY_B, sh));
+    }
+
     function test_postRoot_twiceForSameEpoch_reverts() public {
         uint256 e = DEPLOY_EPOCH;
         postRoot(EPOCH, e, ROOT1, zero5());

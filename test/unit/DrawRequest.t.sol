@@ -126,6 +126,16 @@ contract DrawRequestTest is DrawBase {
         assertEq(draw.lastRound(), VECTOR_ROUND + 1);
     }
 
+    function test_requestDraw_threeInOneRound_eachTakesTheNextRound() public {
+        // The third request follows an odd `lastRound`, so the step must be an increment, not a set bit.
+        uint256 id = openDrawId();
+        request(id);
+        request(id - 1);
+        request(id - 2);
+        assertEq(committedRound(id - 2), VECTOR_ROUND + 2);
+        assertEq(draw.lastRound(), VECTOR_ROUND + 2);
+    }
+
     function testFuzz_requestDraw_roundsStrictlyIncrease(uint256 gap) public {
         uint256 id = openDrawId();
         request(id);
@@ -154,6 +164,27 @@ contract DrawRequestTest is DrawBase {
         assertEq(round, VECTOR_ROUND + 2, "7 seconds later the target round has moved on by two");
         assertEq(seed, bytes32(0));
         assertEq(draw.lastRound(), VECTOR_ROUND + 2);
+    }
+
+    function test_requestDraw_onceTheRoundIsDue_isLocked() public {
+        // Review 2026-09, F08: past the committed round the Seed is public knowledge, so a re-request would let the
+        // Keeper re-roll the draw; up to the last second before it the list may still be corrected.
+        uint256 id = openDrawId();
+        request(id); // commits to VECTOR_ROUND, ten minutes ahead
+        vm.warp(VECTOR_DUE_TS - 1);
+        request(id, keccak256("corrected tickets"), COUNT + 1);
+        uint64 round = committedRound(id);
+        assertGt(round, VECTOR_ROUND, "the correction moved to the next unused round");
+
+        vm.warp(VECTOR_DUE_TS + (round - VECTOR_ROUND) * PERIOD);
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(NutzDraw.RoundDue.selector, id, round));
+        draw.requestDraw(id, keccak256("the same tickets, another round"), COUNT);
+
+        vm.warp(block.timestamp + 1 hours); // and it stays locked however long the round has been public
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(NutzDraw.RoundDue.selector, id, round));
+        draw.requestDraw(id, keccak256("the same tickets, another round"), COUNT);
     }
 
     // ---- no value ----

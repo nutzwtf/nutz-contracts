@@ -40,7 +40,10 @@ contract Deploy is Script {
         uint256 opsCapWei;
     }
 
-    error UnexpectedConverterAddress(address predicted, address actual);
+    error UnexpectedAddress(address predicted, address actual);
+    /// @dev The config repeats an address the script appends itself, or names the zero address; the constructor
+    ///      would store and emit it as given (`executeExclusion` refuses both), so the script refuses it first.
+    error BadExcludedBase(address account);
     error RolesDiffer(address distributor, address converter);
 
     function run() external {
@@ -64,6 +67,7 @@ contract Deploy is Script {
         public
         returns (NutzDistributor d, NutzConverter c, NutzDraw draw)
     {
+        address predictedDistributor = vm.computeCreateAddress(deployer, vm.getNonce(deployer));
         address predictedConverter = vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 1);
         d = new NutzDistributor(
             p.signers,
@@ -74,7 +78,7 @@ contract Deploy is Script {
             p.pushGasPerLeaf,
             p.minUsdgPerEth,
             p.maxUsdgPerEth,
-            p.excludedBase
+            excludedBase(p, predictedDistributor, predictedConverter)
         );
         c = new NutzConverter(
             NutzConverter.Params({
@@ -91,13 +95,42 @@ contract Deploy is Script {
                 opsCap: p.opsCapWei
             })
         );
+        check(predictedDistributor, address(d));
         check(predictedConverter, address(c));
         checkRoles(d, c);
         draw = new NutzDraw(address(d));
     }
 
+    /// @dev The base Excluded list (engineering-spec §3.5): the config's entries (the dead address, the Pons
+    ///      contracts) plus the three addresses only the deploy knows or that the config would otherwise have to
+    ///      repeat: the Distributor and the Converter themselves and the v4 PoolManager, which holds the graduated
+    ///      pool's NUTZ. Review 2026-09, F02: the config alone carried the dead address.
+    function excludedBase(Params memory p, address distributor, address converter)
+        public
+        pure
+        returns (address[] memory list)
+    {
+        uint256 n = p.excludedBase.length;
+        list = new address[](n + 3);
+        for (uint256 i = 0; i < n; i++) {
+            address a = p.excludedBase[i];
+            if (a == address(0) || a == distributor || a == converter || a == p.v4PoolManager) {
+                revert BadExcludedBase(a);
+            }
+            for (uint256 j = 0; j < i; j++) {
+                if (list[j] == a) revert BadExcludedBase(a);
+            }
+            list[i] = a;
+        }
+        list[n] = distributor;
+        list[n + 1] = converter;
+        list[n + 2] = p.v4PoolManager;
+    }
+
+    /// @dev Both predictions are constructor inputs now (the Converter's in the Distributor, the Distributor's own
+    ///      in its Excluded list), so both are asserted.
     function check(address predicted, address actual) public pure {
-        if (predicted != actual) revert UnexpectedConverterAddress(predicted, actual);
+        if (predicted != actual) revert UnexpectedAddress(predicted, actual);
     }
 
     /// @dev Both contracts are governed by the same three Signers and the same Keeper; anything else is a

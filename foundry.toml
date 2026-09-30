@@ -28,6 +28,24 @@ runs = 10_000
 runs = 1_000
 depth = 200
 
+[profile.corpus]                 # FOUNDRY_PROFILE=corpus: coverage-guided fuzzing, on demand (docs/setup/tools.md)
+# Setting corpus_dir turns the mode on and keeps the inputs and call sequences that reached new code under corpus/
+# (gitignored, survives `forge clean`). Not in the default profile: measured with forge 1.8.3, the three invariant
+# suites take ~30 s each instead of a few seconds and the unit suite's fuzz tests did not finish in 5 minutes.
+[profile.corpus.fuzz]
+corpus_dir = "corpus/fuzz"
+[profile.corpus.invariant]
+corpus_dir = "corpus/invariant"
+
+[profile.default.symbolic]        # forge test --symbolic; the test/symbolic/ suites (docs/setup/tools.md)
+# The per-period cap check walks five tokens through three outcomes each and needs ~3,700 paths; the default 1,024
+# stops it as "incomplete"; a two-entry push with Merkle proofs and two payouts runs past the default 10,000 opcodes.
+# The timeout is the solver budget per test in seconds: the fee checks are 256-bit division proofs that Z3 takes
+# minutes over.
+max_paths = 8192
+max_depth = 40000
+timeout = 3000
+
 [profile.default.coverage]
 exclude_tests = true
 skip_files = ["script/**", "src/vendor/**"]
@@ -35,6 +53,10 @@ skip_files = ["script/**", "src/vendor/**"]
 [lint]
 severity = ["high", "med", "low", "info", "gas"]
 ignore = ["test/**/*.sol"]   # test code is not deployed; src/ and script/ are linted on every build
+# reentrancy-events fires on every emit that follows an "external call"; since forge 1.8.3 that includes calls made
+# inside library code, i.e. the ecrecover precompile in OpenZeppelin ECDSA.recover (`_require2of3`) and the EIP-2537
+# precompiles in the Draw's verify path. Precompiles cannot call back: all ten hits are false positives.
+exclude_lints = ["reentrancy-events"]
 
 [fmt]
 line_length = 120

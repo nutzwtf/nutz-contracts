@@ -7,6 +7,7 @@ import {NutzDistributor} from "../../src/NutzDistributor.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {CompleteMerkle} from "murky/CompleteMerkle.sol";
 import {MerkleTrees} from "./MerkleTrees.sol";
+import {StorageSlots} from "./StorageSlots.sol";
 
 /// @dev Shared fixture: a deployed Distributor, five mock tokens, a funded Converter, EIP-712 signing helpers.
 abstract contract DistributorBase is Test, MerkleTrees {
@@ -23,6 +24,9 @@ abstract contract DistributorBase is Test, MerkleTrees {
 
     uint256 internal constant DEPLOY_TS = 1_800_000_000; // epoch 500000, draw 2976
     uint256 internal constant DEPLOY_EPOCH = 500_000;
+    // Signer-set bounds on the push rate, raw USDG (6 decimals) per ETH.
+    uint256 internal constant MIN_RATE = 1_000e6;
+    uint256 internal constant MAX_RATE = 10_000e6;
 
     NutzDistributor.Kind internal constant EPOCH = NutzDistributor.Kind.Epoch;
     NutzDistributor.Kind internal constant DRAW = NutzDistributor.Kind.Draw;
@@ -48,17 +52,7 @@ abstract contract DistributorBase is Test, MerkleTrees {
         }
         address[] memory excludedBase = new address[](1);
         excludedBase[0] = dead;
-        d = new NutzDistributor(
-            [vm.addr(KEY_A), vm.addr(KEY_B), vm.addr(KEY_C)],
-            keeper,
-            converter,
-            tokens(),
-            100_000, // PUSH_GAS_BASE
-            40_000, // PUSH_GAS_PER_LEAF
-            1_000e6, // min raw USDG (6 decimals) per ETH
-            10_000e6, // max raw USDG (6 decimals) per ETH
-            excludedBase
-        );
+        d = deploy(converter, tokens(), MIN_RATE, MAX_RATE, excludedBase);
         for (uint256 i = 0; i < 5; i++) {
             tok[i].mint(converter, 1_000_000e18);
             vm.prank(converter);
@@ -69,6 +63,40 @@ abstract contract DistributorBase is Test, MerkleTrees {
     }
 
     // ---- fixtures ----
+
+    /// @dev The fixture's constructor call with the arguments the constructor checks left open.
+    function deploy(
+        address converter_,
+        IERC20[5] memory tokens_,
+        uint256 minRate_,
+        uint256 maxRate_,
+        address[] memory excludedBase_
+    ) internal returns (NutzDistributor) {
+        return new NutzDistributor(
+            [vm.addr(KEY_A), vm.addr(KEY_B), vm.addr(KEY_C)],
+            keeper,
+            converter_,
+            tokens_,
+            100_000, // PUSH_GAS_BASE
+            40_000, // PUSH_GAS_PER_LEAF
+            minRate_,
+            maxRate_,
+            excludedBase_
+        );
+    }
+
+    /// @dev `deploy` behind an external call, for `vm.expectRevert`: under forge's dynamic test linking a plain
+    ///      `new` of a linked contract lets the expected revert run up through the test, which still passes, so
+    ///      only the first case of a multi-case test is checked (see ConverterBase.deployConverter).
+    function deployDistributor(
+        address converter_,
+        IERC20[5] memory tokens_,
+        uint256 minRate_,
+        uint256 maxRate_,
+        address[] memory excludedBase_
+    ) external returns (NutzDistributor) {
+        return deploy(converter_, tokens_, minRate_, maxRate_, excludedBase_);
+    }
 
     function tokens() internal view returns (IERC20[5] memory t) {
         for (uint256 i = 0; i < 5; i++) {
@@ -98,6 +126,48 @@ abstract contract DistributorBase is Test, MerkleTrees {
         root = rootOf(epochId, claims);
         postRoot(EPOCH, epochId, root, totalsOf(claims));
         vm.warp(block.timestamp + 30 minutes);
+    }
+
+    // ---- state written straight into storage (StorageSlots), for the symbolic suites ----
+
+    /// @dev Makes `id` a Final Epoch whose Root is `root`, with no funding, totals or signatures behind it.
+    function plantFinalRoot(uint256 id, bytes32 root) internal {
+        vm.store(address(d), StorageSlots.ledgerField(EPOCH, id, StorageSlots.LEDGER_ROOT), root);
+        vm.store(
+            address(d),
+            StorageSlots.ledgerField(EPOCH, id, StorageSlots.LEDGER_ROOT_POSTED_AT),
+            bytes32(block.timestamp - d.CLAIM_DELAY())
+        );
+    }
+
+    /// @dev Sets `id`'s `funded`, `totals` or `claimed` (one of the StorageSlots.LEDGER_* array bases) to `v`.
+    function plantLedgerArray(uint256 id, uint256 field, uint256[5] memory v) internal {
+        for (uint256 i = 0; i < 5; i++) {
+            vm.store(address(d), StorageSlots.ledgerArray(EPOCH, id, field, i), bytes32(v[i]));
+        }
+    }
+
+    /// @dev Gives the Distributor every token in existence, so no payout the solver picks can fail for balance.
+    function fundDistributorToTheMax() internal {
+        for (uint256 i = 0; i < 5; i++) {
+            tok[i].mint(address(d), type(uint256).max - tok[i].totalSupply());
+        }
+    }
+
+    /// @dev `assertEq(bytes, bytes)` for revert data under `forge test --symbolic`: forge-std's hashes the buffer,
+    ///      which the engine cannot do over return data of symbolic length; selector and first word compare fine.
+    function assertRevertData(bytes memory err, bytes memory expected) internal pure {
+        assertEq(err.length, expected.length, "revert data length");
+        assertEq(bytes4(err), bytes4(expected), "revert selector");
+        if (expected.length >= 36) {
+            uint256 got;
+            uint256 want;
+            assembly ("memory-safe") {
+                got := mload(add(err, 36))
+                want := mload(add(expected, 36))
+            }
+            assertEq(got, want, "revert argument");
+        }
     }
 
     // ---- EIP-712, built independently of the contract ----

@@ -25,6 +25,7 @@ contract DrawInvariantTest is DrawBase {
             if (ghost != 0) assertEq(ghost, sha256(h.ghostSignature(id)));
         }
         assertFalse(h.ghostFulfilledChanged(), "a fulfilled draw was touched");
+        assertFalse(h.ghostDueRoundReplaced(), "a public round was replaced (F08)");
         assertFalse(h.ghostBadSignatureAccepted(), "a tampered or mis-sized signature fulfilled a draw");
     }
 

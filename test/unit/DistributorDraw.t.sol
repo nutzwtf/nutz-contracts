@@ -34,6 +34,16 @@ contract DistributorDrawTest is DistributorBase {
         d.notifyDrawFunding(drawId, a);
     }
 
+    /// @dev Installs the Draw contract and runs the deploy week to a posted Root: `DEPLOY_DRAW` is then closed.
+    function rootDeployDraw() internal {
+        installDrawContract(address(draw));
+        accumulateAcorn();
+        draw.setSeed(DEPLOY_DRAW, SEED);
+        pullAcorn(DEPLOY_DRAW);
+        fundDraw(DEPLOY_DRAW, amounts(10e18, 10e18, 10e18, 10e18, 0));
+        postRoot(DRAW, DEPLOY_DRAW, keccak256("r"), amounts(10e18, 10e18, 10e18, 10e18, 0));
+    }
+
     // ---- draw contract (48h timelock) ----
 
     function test_drawContract_startsZero_andIsSetThroughTheTimelock() public {
@@ -57,6 +67,11 @@ contract DistributorDrawTest is DistributorBase {
         bytes32 sh = keccak256(abi.encode(SET_DRAW_CONTRACT_TYPEHASH, address(0), uint256(0)));
         vm.expectRevert(Signers.ZeroAddress.selector);
         d.proposeDrawContract(address(0), sign(KEY_A, sh), sign(KEY_B, sh));
+    }
+
+    function test_executeDrawContract_zero_reverts() public {
+        vm.expectRevert(Signers.ZeroAddress.selector);
+        d.executeDrawContract(address(0));
     }
 
     // ---- pullAcorn ----
@@ -112,6 +127,23 @@ contract DistributorDrawTest is DistributorBase {
         d.pullAcorn(DEPLOY_DRAW);
     }
 
+    function test_pullAcorn_rootedDraw_periodClosed() public {
+        rootDeployDraw();
+        // The closed-period check precedes the converted one: the Root, not the conversion, ends the draw's funding.
+        vm.prank(converter);
+        vm.expectRevert(abi.encodeWithSelector(NutzDistributor.PeriodClosed.selector, DEPLOY_DRAW));
+        d.pullAcorn(DEPLOY_DRAW);
+    }
+
+    function test_pullAcorn_drawBelowRootedThrough_periodClosed() public {
+        // The check is "at or below" the mark, not "at" it: a week two Roots back is as closed as the last one.
+        rootDeployDraw();
+        draw.setSeed(DEPLOY_DRAW - 1, SEED);
+        vm.prank(converter);
+        vm.expectRevert(abi.encodeWithSelector(NutzDistributor.PeriodClosed.selector, DEPLOY_DRAW - 1));
+        d.pullAcorn(DEPLOY_DRAW - 1);
+    }
+
     // ---- notifyDrawFunding ----
 
     function test_notifyDrawFunding_requiresConversion() public {
@@ -120,6 +152,54 @@ contract DistributorDrawTest is DistributorBase {
         vm.prank(converter);
         vm.expectRevert(abi.encodeWithSelector(NutzDistributor.NotConverted.selector, DEPLOY_DRAW));
         d.notifyDrawFunding(DEPLOY_DRAW, amounts(1e18, 1e18, 1e18, 1e18, 0));
+    }
+
+    function test_notifyDrawFunding_rootedDraw_periodClosed() public {
+        rootDeployDraw();
+        vm.prank(converter);
+        vm.expectRevert(abi.encodeWithSelector(NutzDistributor.PeriodClosed.selector, DEPLOY_DRAW));
+        d.notifyDrawFunding(DEPLOY_DRAW, amounts(1e18, 0, 0, 0, 0));
+    }
+
+    function test_notifyDrawFunding_drawBelowRootedThrough_periodClosed() public {
+        // The deploy week's pool is pulled but never funded back; the next week's Root skips it. Funding it then
+        // is PeriodClosed: the check is "at or below" the mark, not "at" it.
+        installDrawContract(address(draw));
+        accumulateAcorn();
+        draw.setSeed(DEPLOY_DRAW, SEED);
+        pullAcorn(DEPLOY_DRAW);
+        fund(DEPLOY_EPOCH + 2, amounts(0, 0, 0, 0, 1e18), 50e18);
+        closeDraw(DEPLOY_DRAW + 1);
+        draw.setSeed(DEPLOY_DRAW + 1, SEED);
+        pullAcorn(DEPLOY_DRAW + 1);
+        fundDraw(DEPLOY_DRAW + 1, amounts(0, 0, 0, 0, 50e18));
+        postRoot(DRAW, DEPLOY_DRAW + 1, keccak256("r"), amounts(0, 0, 0, 0, 50e18));
+
+        vm.prank(converter);
+        vm.expectRevert(abi.encodeWithSelector(NutzDistributor.PeriodClosed.selector, DEPLOY_DRAW));
+        d.notifyDrawFunding(DEPLOY_DRAW, amounts(1e18, 0, 0, 0, 0));
+    }
+
+    function test_notifyDrawFunding_zeroLeg_neverCallsTransferFrom() public {
+        // As for Epoch funding: a token with nothing to fund is not touched, so a paused issuer cannot block the rest.
+        installDrawContract(address(draw));
+        accumulateAcorn();
+        draw.setSeed(DEPLOY_DRAW, SEED);
+        pullAcorn(DEPLOY_DRAW);
+        vm.expectCall(address(tok[2]), abi.encodeCall(tok[2].transferFrom, (converter, address(d), 0)), 0);
+        fundDraw(DEPLOY_DRAW, amounts(1e18, 2e18, 0, 3e18, 75e18));
+    }
+
+    function test_notifyDrawFunding_accumulates() public {
+        installDrawContract(address(draw));
+        accumulateAcorn();
+        draw.setSeed(DEPLOY_DRAW, SEED);
+        pullAcorn(DEPLOY_DRAW);
+        fundDraw(DEPLOY_DRAW, amounts(1e18, 0, 0, 0, 75e18));
+        fundDraw(DEPLOY_DRAW, amounts(1e18, 0, 0, 0, 75e18));
+        NutzDistributor.Ledger memory L = d.ledger(DRAW, DEPLOY_DRAW);
+        assertEq(L.funded[0], 2e18, "twice the same amount is a sum, not an or or an xor");
+        assertEq(L.funded[4], 150e18);
     }
 
     function test_notifyDrawFunding_recordsStocksAndReturnedUsdg() public {
@@ -147,6 +227,15 @@ contract DistributorDrawTest is DistributorBase {
         bytes32 sh = postRootHash(DRAW, DEPLOY_DRAW, keccak256("r"), zero5(), d.nonce());
         vm.expectRevert(abi.encodeWithSelector(NutzDistributor.NotConverted.selector, DEPLOY_DRAW));
         d.postRoot(DRAW, DEPLOY_DRAW, keccak256("r"), zero5(), sign(KEY_A, sh), sign(KEY_B, sh));
+    }
+
+    function test_postRoot_draw_openWeek_reverts() public {
+        // A draw's period is the week, not the hour: the current week is open however many Epochs have closed.
+        installDrawContract(address(draw));
+        uint256 id = d.currentDraw();
+        bytes32 sh = postRootHash(DRAW, id, keccak256("r"), zero5(), d.nonce());
+        vm.expectRevert(abi.encodeWithSelector(NutzDistributor.PeriodNotClosed.selector, id));
+        d.postRoot(DRAW, id, keccak256("r"), zero5(), sign(KEY_A, sh), sign(KEY_B, sh));
     }
 
     function test_drawLifecycle_pullFundPostClaim_withCarryForSkippedGolden() public {

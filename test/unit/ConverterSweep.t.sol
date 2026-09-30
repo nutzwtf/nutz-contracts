@@ -172,6 +172,41 @@ contract ConverterSweepTest is ConverterBase {
         sweepReverting(epoch, sweepRoutes(), abi.encodePacked(NutzConverter.OpsTransferFailed.selector));
     }
 
+    function test_ops_zeroCap_neverCallsTheKeeperWallet() public {
+        // With nothing to pay, a wallet that would refuse the call must not be able to break the Sweep.
+        setOpsCap(0);
+        vm.deal(address(c), 1 ether);
+        vm.etch(keeper, hex"60006000fd");
+        sweep(epoch, sweepRoutes());
+        assertEq(keeper.balance, 0);
+    }
+
+    function test_sweep_deadlineInTheFuture_isAccepted() public {
+        // The deadline is a bound, not an exact time: the fixture always passes `block.timestamp`, so a mutant that
+        // reverts on anything but equality would go unnoticed.
+        vm.deal(address(c), 1 ether);
+        vm.prank(keeper);
+        c.sweep(epoch, sweepRoutes(), block.timestamp + 1 hours);
+        assertEq(funded(epoch)[4], 840e6);
+    }
+
+    function test_sweep_usdgIsApprovedOnce_forCashAndAcornTogether() public {
+        // 1 ETH: 840 USDG of Cash and 300 of Acorn; the Distributor pulls both under one 1,140 USDG approval.
+        vm.deal(address(c), 1 ether);
+        vm.expectCall(address(usdg), abi.encodeCall(IERC20.approve, (address(d), 840e6)), 0);
+        vm.expectCall(address(usdg), abi.encodeCall(IERC20.approve, (address(d), 1_140e6)), 1);
+        sweep(epoch, sweepRoutes());
+    }
+
+    function test_sweep_skippedLeg_isNotApproved() public {
+        // A Leg that funds nothing gets no approval at all, not even a zeroing one.
+        vm.deal(address(c), 1 ether);
+        disableLeg(2);
+        vm.expectCall(address(tok[2]), abi.encodeCall(IERC20.approve, (address(d), 0)), 0);
+        sweep(epoch, sweepRoutes());
+        assertEq(funded(epoch)[2], 0);
+    }
+
     // ---- ETH -> USDG, the Leg that aborts the Sweep ----
 
     function test_ethToUsdgFailure_revertsEverythingIncludingOps() public {
@@ -330,6 +365,23 @@ contract ConverterSweepTest is ConverterBase {
         assertEq(escrow.balanceOf(address(c)), 0);
     }
 
+    function test_phase0_sweepsCurve_withFeesAloneOrEqualTax() public {
+        // The gate is "anything pending": fees without tax, and fees equal to the tax, both open it.
+        bindNutz();
+        vm.deal(address(curve), 1 ether);
+        curve.setBalances(0.1 ether, 0);
+        vm.deal(address(c), 1 ether);
+        vm.expectEmit(address(c));
+        emit NutzConverter.FeesPulled(true, false, 0.1 ether);
+        sweep(epoch, sweepRoutes());
+
+        curve.setBalances(0.1 ether, 0.1 ether);
+        vm.deal(address(c), 1 ether);
+        vm.expectEmit(address(c));
+        emit NutzConverter.FeesPulled(true, false, 0.2 ether);
+        sweep(epoch, sweepRoutes());
+    }
+
     function test_phase0_skipsCurveWhenNothingPending() public {
         bindNutz();
         vm.deal(address(c), 1 ether);
@@ -362,6 +414,26 @@ contract ConverterSweepTest is ConverterBase {
         vm.expectEmit(address(c));
         emit NutzConverter.FeesPulled(false, true, 0.25 ether);
         assertEq(sweepReadingEthIn(sweepRoutes()), 1.25 ether, "hook fees join the Sweep");
+    }
+
+    function test_phase2_sweepsHook_withFeesAloneOrEqualTax() public {
+        // The hook's gate is "any ETH pending", fees or tax: alone, and equal to each other, both open it.
+        bindNutz();
+        setPhase(2);
+        bytes32 id = nutzPoolId();
+        hook.register(id, address(nutzToken), address(c));
+        vm.deal(address(hook), 1 ether);
+        hook.setPending(id, ETH, 0.2 ether, 0, 0);
+        vm.deal(address(c), 1 ether);
+        vm.expectEmit(address(c));
+        emit NutzConverter.FeesPulled(false, true, 0.2 ether);
+        sweep(epoch, sweepRoutes());
+
+        hook.setPending(id, ETH, 0.2 ether, 0.2 ether, 0);
+        vm.deal(address(c), 1 ether);
+        vm.expectEmit(address(c));
+        emit NutzConverter.FeesPulled(false, true, 0.4 ether);
+        sweep(epoch, sweepRoutes());
     }
 
     /// @dev Phase 2 with 0.2 ETH of fees pending plus one amount the creator is not allowed to sweep past; the
@@ -487,6 +559,25 @@ contract ConverterSweepTest is ConverterBase {
         assertEq(sweepReadingEthIn(nutzRoutes()), 1 ether, "the Sweep went on without the sale");
         assertEq(nutzToken.balanceOf(address(c)), 4_000e18);
         assertEq(nutzToken.allowance(address(c), address(router)), 0);
+    }
+
+    function test_dustNutz_withAWellFormedRoute_isSkippedNotStalled() public {
+        // Review 2026-09, F05: anyone can put one wei of NUTZ in the bound Converter. With the Route the Keeper
+        // always sends (NUTZ ‖ fee ‖ WETH), a Venue that cannot fill it is caught and the dust waits; the empty
+        // Route the ADR used to prescribe would revert the whole Sweep instead.
+        bindNutz();
+        nutzToken.mint(address(c), 1);
+        router.setReverts(address(weth), true); // no NUTZ pool on the Venue yet
+        vm.deal(address(c), 1 ether);
+        vm.expectEmit(address(c));
+        emit NutzConverter.LegSkipped(0, abi.encodeWithSelector(MockSwapRouter02.VenueReverts.selector, address(weth)));
+        assertEq(sweepReadingEthIn(nutzRoutes()), 1 ether, "the Sweep went on");
+        assertEq(nutzToken.balanceOf(address(c)), 1, "the dust waits");
+
+        NutzConverter.Route[6] memory empty = nutzRoutes();
+        empty[0] = NutzConverter.Route({venue: address(0), minOut: 0, data: ""});
+        vm.deal(address(c), 1 ether);
+        sweepReverting(epoch, empty, abi.encodeWithSelector(NutzConverter.BadVenue.selector, address(0)));
     }
 
     function test_noNutzHeld_skipsTheSale() public {

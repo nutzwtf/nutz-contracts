@@ -39,6 +39,14 @@ contract ConverterGovernanceTest is ConverterBase {
         }
     }
 
+    function test_splitConstants_addUp() public view {
+        // engineering-spec §6: 60 / 28 / 10 / 2, the Holder share being the first three.
+        assertEq(c.SPLIT_STASH_BPS() + c.SPLIT_CASH_BPS() + c.SPLIT_ACORN_BPS() + c.SPLIT_OPS_BPS(), c.BPS());
+        assertEq(c.SPLIT_STASH_BPS() + c.SPLIT_CASH_BPS() + c.SPLIT_ACORN_BPS(), c.HOLDER_BPS());
+        assertEq(c.SPLIT_ACORN_BPS(), 1000);
+        assertEq(c.PER_STOCK_BPS() * c.STOCK_LEGS(), c.BPS());
+    }
+
     function test_receive_acceptsEthFromAnyone() public {
         address stranger = makeAddr("stranger");
         vm.deal(stranger, 1 ether);
@@ -56,7 +64,7 @@ contract ConverterGovernanceTest is ConverterBase {
 contract ConverterConstructorTest is ConverterBase {
     function expectZero(NutzConverter.Params memory p) internal {
         vm.expectRevert(Signers.ZeroAddress.selector);
-        new NutzConverter(p);
+        this.deployConverter(p);
     }
 
     function test_constructor_rejectsEveryZeroAddress() public {
@@ -99,7 +107,7 @@ contract ConverterConstructorTest is ConverterBase {
         NutzConverter.Params memory p = params();
         p.opsCap = 5 ether + 1;
         vm.expectRevert(abi.encodeWithSelector(NutzConverter.OpsCapTooHigh.selector, 5 ether + 1));
-        new NutzConverter(p);
+        this.deployConverter(p);
     }
 
     function test_constructor_acceptsOpsCapAtMaxAndZero() public {
@@ -161,6 +169,16 @@ contract ConverterBindTest is ConverterBase {
         // a stranger's launch naming someone else as recipient; the record exists but is not ours
         IPonsV2LaunchFactory.LaunchedToken memory L = launchRecord(nutzToken, makeAddr("curve"));
         L.creatorFeeRecipient = makeAddr("someoneElse");
+        factory.setLaunchedToken(nutzToken, L);
+        vm.expectRevert(abi.encodeWithSelector(NutzConverter.NotOurLaunch.selector, nutzToken));
+        vm.prank(keeper);
+        c.bindNutz(nutzToken);
+    }
+
+    function test_bind_recipientBelowTheConverter_reverts() public {
+        // The recipient check is equality, not order: an address below the Converter is still someone else.
+        IPonsV2LaunchFactory.LaunchedToken memory L = launchRecord(nutzToken, makeAddr("curve"));
+        L.creatorFeeRecipient = address(1);
         factory.setLaunchedToken(nutzToken, L);
         vm.expectRevert(abi.encodeWithSelector(NutzConverter.NotOurLaunch.selector, nutzToken));
         vm.prank(keeper);

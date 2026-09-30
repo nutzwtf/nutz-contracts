@@ -1,11 +1,11 @@
 {
-  "_comment": "Chain 4663 deploy parameters. TODO before launch: signers, keeper, gas constants from the week-2 fork measurement, excludedBase (Pons contracts; the v4 pool is appended at graduation). MU and SPCX symbols and decimals verified on chain 2026-09-13; a human still confirms both are StockFactory beacon proxies on Blockscout.",
+  "_comment": "Chain 4663 deploy parameters. TODO before launch: signers, keeper, gas constants from the week-2 fork measurement, excludedBase (the Pons locker and buyback vault; the script itself appends the Distributor, the Converter and v4PoolManager, review 2026-09 F02). MU and SPCX symbols and decimals verified on chain 2026-09-13; a human still confirms both are StockFactory beacon proxies on Blockscout. minUsdgPerEth is ~80% of spot on the day it is set (review 2026-09 F06): re-check on launch day.",
   "excludedBase": [
     "0x000000000000000000000000000000000000dEaD"
   ],
   "keeper": "0x7c3afb3a1c38a098279c77b15d96c935afb05214",
   "maxUsdgPerEth": "10000000000",
-  "minUsdgPerEth": "1000000000",
+  "minUsdgPerEth": "2000000000",
   "opsCapWei": "500000000000000000",
   "ponsEscrow": "0xd3AFEB2a57f70eF218Aa82451c51B2fb0416Ac9e",
   "ponsFactory": "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e",

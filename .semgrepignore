@@ -1,0 +1,8 @@
+# Semgrep's built-in default ignore list skips every `vendor/` directory. src/vendor/bls is inside the review scope
+# and must be scanned, so this file replaces the defaults with only what never holds our code.
+lib/
+out/
+cache/
+corpus/
+semgrep-rules/
+tooling/node_modules/

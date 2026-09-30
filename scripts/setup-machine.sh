@@ -17,7 +17,7 @@ if ! grep -q 'mise activate zsh' "$HOME/.zshrc" 2>/dev/null; then
   fi
 else echo "Already present."; fi
 
-step "3/5 Repo runtimes (mise trust + install: foundry 1.8.1, node 24, pnpm 11, uv)"
+step "3/5 Repo runtimes (mise trust + install: foundry 1.8.3, node 24, pnpm 11, uv)"
 if command -v mise >/dev/null; then mise trust && mise install; else echo "mise not on PATH yet; rerun after step 1 and 'exec zsh'."; fi
 if [ -x "$HOME/.foundry/bin/forge" ]; then
   echo "Note: a foundryup copy of Foundry exists in ~/.foundry/bin (used to bootstrap the scaffold)."

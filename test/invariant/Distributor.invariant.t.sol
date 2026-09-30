@@ -69,6 +69,46 @@ contract DistributorInvariantTest is DistributorBase {
         }
     }
 
+    /// @notice Spec §7 invariant 3: tokens leave the Distributor only to the `account` of a valid leaf (or to
+    ///         the Keeper as a push fee, or to the Converter through `pullAcorn`), whoever made the call, and
+    ///         every allowed amount either arrived or is recorded as stuck for that account. Attack actions
+    ///         (wrong proof, foreign account, inflated amounts, replay, non-final Root, non-Keeper push) revert
+    ///         inside the handler; this checks the ledger they left behind.
+    function invariant_tokensLeaveOnlyToLeafAccounts() public view {
+        uint256 n = h.recipientCount();
+        for (uint256 r = 0; r < n; r++) {
+            address to = h.recipients(r);
+            assertTrue(
+                h.isLeafAccount(to) || to == h.keeperAddress() || to == h.converterAddress(),
+                "tokens reached an address that is not a leaf account, the Keeper or the Converter"
+            );
+            uint256[5] memory out = h.outOf(to);
+            uint256[5] memory allowed = h.allowedOf(to);
+            uint256[5] memory stuck = d.stuck(to);
+            for (uint256 i = 0; i < 5; i++) {
+                assertEq(out[i] + stuck[i], allowed[i], "paid + stuck != allowed");
+            }
+        }
+    }
+
+    /// @notice Spec §6 "bad root": a Root whose leaves sum to more than its totals can never pay out more than
+    ///         the totals. Per rooted period and token, claimed never exceeds totals; the handler asserts that
+    ///         the claim crossing the line reverts CapExceeded.
+    function invariant_claimsNeverExceedPeriodTotals() public view {
+        _checkPeriodCaps(EPOCH, h.rootedEpochCount());
+        _checkPeriodCaps(DRAW, h.rootedDrawCount());
+    }
+
+    function _checkPeriodCaps(NutzDistributor.Kind kind, uint256 n) internal view {
+        for (uint256 k = 0; k < n; k++) {
+            uint256 id = kind == EPOCH ? h.rootedEpochs(k) : h.rootedDraws(k);
+            NutzDistributor.Ledger memory L = d.ledger(kind, id);
+            for (uint256 i = 0; i < 5; i++) {
+                assertLe(L.claimed[i], L.totals[i], "claimed past the period's totals");
+            }
+        }
+    }
+
     /// @notice A claimed flag never flips back.
     function invariant_claimedIsMonotone() public view {
         uint256 n = h.claimedFlagCount();

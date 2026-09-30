@@ -1,0 +1,110 @@
+{
+  "fuzzing": {
+    "workers": 6,
+    "workerResetLimit": 50,
+    "timeout": 0,
+    "testLimit": 0,
+    "shrinkLimit": 5000,
+    "callSequenceLength": 100,
+    "corpusDirectory": "corpus/medusa/distributor",
+    "coverageEnabled": true,
+    "pruneFrequency": 5,
+    "coverageFormats": [
+      "lcov",
+      "html"
+    ],
+    "coverageExclusions": [
+      "lib/**",
+      "test/**",
+      "script/**"
+    ],
+    "revertReporterEnabled": true,
+    "targetContracts": [
+      "DistributorTester"
+    ],
+    "predeployedContracts": {},
+    "targetContractsBalances": [],
+    "constructorArgs": {},
+    "deployerAddress": "0x30000",
+    "senderAddresses": [
+      "0x10000",
+      "0x20000",
+      "0x30000"
+    ],
+    "blockNumberDelayMax": 60,
+    "blockTimestampDelayMax": 900,
+    "transactionGasLimit": 30000000,
+    "testing": {
+      "stopOnFailedTest": true,
+      "stopOnFailedContractMatching": false,
+      "stopOnNoTests": true,
+      "testAllContracts": false,
+      "testViewMethods": false,
+      "verbosity": 1,
+      "targetFunctionSignatures": [],
+      "excludeFunctionSignatures": [],
+      "assertionTesting": {
+        "enabled": true,
+        "panicCodeConfig": {
+          "failOnCompilerInsertedPanic": true,
+          "failOnAssertion": true,
+          "failOnArithmeticUnderflow": true,
+          "failOnDivideByZero": true,
+          "failOnEnumTypeConversionOutOfBounds": true,
+          "failOnIncorrectStorageAccess": true,
+          "failOnPopEmptyArray": true,
+          "failOnOutOfBoundsArrayAccess": true,
+          "failOnAllocateTooMuchMemory": true,
+          "failOnCallUninitializedVariable": true
+        }
+      },
+      "propertyTesting": {
+        "enabled": true,
+        "testPrefixes": [
+          "property_"
+        ]
+      },
+      "optimizationTesting": {
+        "enabled": false,
+        "testPrefixes": [
+          "optimize_"
+        ]
+      }
+    },
+    "chainConfig": {
+      "codeSizeCheckDisabled": true,
+      "skipAccountChecks": true,
+      "cheatCodes": {
+        "cheatCodesEnabled": true,
+        "enableFFI": false
+      },
+      "forkConfig": {
+        "forkModeEnabled": false,
+        "rpcUrl": "",
+        "rpcBlock": 1,
+        "poolSize": 20
+      }
+    }
+  },
+  "compilation": {
+    "platform": "crytic-compile",
+    "platformConfig": {
+      "target": ".",
+      "solcVersion": "",
+      "exportDirectory": "",
+      "args": [
+        "--foundry-compile-all"
+      ]
+    }
+  },
+  "slither": {
+    "useSlither": false,
+    "cachePath": "slither_results.json",
+    "args": []
+  },
+  "logging": {
+    "level": "info",
+    "logDirectory": "",
+    "noColor": false
+  }
+}

@@ -68,6 +68,9 @@ contract NutzDraw is INutzDraw {
     error NotKeeper();
     /// @dev A Draw Root needs `drawId < currentDraw()`, so a draw is only requested for a week that has ended.
     error DrawNotOpen(uint256 drawId);
+    /// @dev The committed round has been published: its Seed is public knowledge, so the list can only be fulfilled,
+    ///      never re-requested (review 2026-09, F08).
+    error RoundDue(uint256 drawId, uint64 round);
     /// @dev The Seed is final: no re-request and no second fulfilment.
     error AlreadyFulfilled(uint256 drawId);
     /// @dev A week without Ticket holders is not requested; the Distributor Skips it.
@@ -100,8 +103,10 @@ contract NutzDraw is INutzDraw {
 
     /// @notice Commits the Ticket list of `drawId` (the Unix week that ended last Thursday: `currentDraw() - 1`) to
     ///         the quicknet round ten minutes ahead, or the next unused round if later. Keeper-only, read from the
-    ///         Distributor at call time. An unfulfilled draw may be requested again: root, count and round are
-    ///         replaced, and the new round again lies in the future.
+    ///         Distributor at call time. An unfulfilled draw may be requested again while its round is still
+    ///         ahead: root, count and round are replaced, and the new round again lies in the future. Once the
+    ///         committed round is due its signature is public, and with it the Seed, so the list is locked: a
+    ///         Keeper that could re-request then would re-roll the draw until it liked the outcome.
     function requestDraw(uint256 drawId, bytes32 ticketsRoot, uint256 ticketCount) external {
         // Two views on an immutable address (STATICCALL): nothing can re-enter before the writes below.
         // aderyn-fp-next-line(reentrancy-state-change)
@@ -110,6 +115,7 @@ contract NutzDraw is INutzDraw {
         if (drawId >= DISTRIBUTOR.currentDraw()) revert DrawNotOpen(drawId);
         Draw storage d = draws[drawId];
         if (d.seed != 0) revert AlreadyFulfilled(drawId);
+        if (d.round != 0 && currentRound() >= d.round) revert RoundDue(drawId, d.round);
         if (ticketsRoot == 0 || ticketCount == 0) revert NoTickets();
         // Strictly increasing across every request, so two draws never share a Seed; the `max` only matters for
         // two requests inside one 3-second round.

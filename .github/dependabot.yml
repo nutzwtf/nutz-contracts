@@ -1,0 +1,14 @@
+# Dependabot opens PRs; nothing here merges on its own.
+version: 2
+updates:
+  # lib/ submodules (forge-std, openzeppelin-contracts, murky, v4-core). Reviewed by hand: foundry.lock pins them,
+  # the contracts import OpenZeppelin, and a bump is its own commit with remappings re-checked (environment.md §4).
+  - package-ecosystem: gitsubmodule
+    directory: /
+    schedule:
+      interval: weekly
+  # The SHA-pinned actions in .github/workflows/ci.yml; Dependabot rewrites the SHA and the version comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

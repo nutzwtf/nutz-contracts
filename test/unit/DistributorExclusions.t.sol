@@ -72,6 +72,15 @@ contract DistributorExclusionsTest is DistributorBase {
         d.proposeExclusion(cex, sign(KEY_B, sh), sign(KEY_C, sh));
     }
 
+    function test_exclusion_addressBelowEveryEntry_isAppended() public {
+        // The duplicate check is equality, not order: an address below `dead` (0x…dEaD) is a new entry.
+        address low = address(1);
+        proposeExclusion(low);
+        vm.warp(block.timestamp + 48 hours);
+        d.executeExclusion(low);
+        assertEq(d.excluded()[1], low);
+    }
+
     function test_exclusion_zero_reverts() public {
         bytes32 sh = keccak256(abi.encode(APPEND_EXCLUDED_TYPEHASH, address(0), uint256(0)));
         vm.expectRevert(Signers.ZeroAddress.selector);

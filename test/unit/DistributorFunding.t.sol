@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.37;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {NutzDistributor} from "../../src/NutzDistributor.sol";
+import {Signers} from "../../src/Signers.sol";
 import {DistributorBase} from "../harness/DistributorBase.sol";
 
 contract DistributorFundingTest is DistributorBase {
@@ -23,6 +25,33 @@ contract DistributorFundingTest is DistributorBase {
         assertEq(d.rootedThrough(DRAW), 2_975);
         assertEq(d.excluded().length, 1);
         assertEq(d.excluded()[0], dead);
+    }
+
+    function test_constructor_zeroConverter_reverts() public {
+        vm.expectRevert(Signers.ZeroAddress.selector);
+        this.deployDistributor(address(0), tokens(), MIN_RATE, MAX_RATE, new address[](0));
+    }
+
+    function test_constructor_zeroToken_reverts() public {
+        for (uint256 i = 0; i < 5; i++) {
+            IERC20[5] memory t = tokens();
+            t[i] = IERC20(address(0));
+            vm.expectRevert(Signers.ZeroAddress.selector);
+            this.deployDistributor(converter, t, MIN_RATE, MAX_RATE, new address[](0));
+        }
+    }
+
+    function test_constructor_invalidRateRange_reverts() public {
+        vm.expectRevert(NutzDistributor.InvalidRateRange.selector);
+        this.deployDistributor(converter, tokens(), 0, MAX_RATE, new address[](0));
+        vm.expectRevert(NutzDistributor.InvalidRateRange.selector);
+        this.deployDistributor(converter, tokens(), MAX_RATE + 1, MAX_RATE, new address[](0));
+    }
+
+    function test_constructor_pointRateRange_isAccepted() public {
+        NutzDistributor p = deploy(converter, tokens(), MAX_RATE, MAX_RATE, new address[](0));
+        assertEq(p.minUsdgPerEth(), MAX_RATE);
+        assertEq(p.maxUsdgPerEth(), MAX_RATE);
     }
 
     // ---- notifyEpochFunding ----
@@ -76,9 +105,25 @@ contract DistributorFundingTest is DistributorBase {
         d.notifyEpochFunding(e, amounts(0, 0, 0, 0, 1e18), 0);
     }
 
+    function test_funding_zeroLeg_neverCallsTransferFrom() public {
+        // A token with nothing to fund is not touched: a paused issuer must not be able to block the others.
+        uint256 e = d.currentEpoch();
+        vm.expectCall(address(tok[1]), abi.encodeCall(tok[1].transferFrom, (converter, address(d), 0)), 0);
+        vm.expectCall(address(tok[4]), abi.encodeCall(tok[4].transferFrom, (converter, address(d), 0)), 0);
+        fund(e, amounts(1e18, 0, 0, 0, 0), 0);
+    }
+
     function test_funding_byNonConverter_reverts() public {
         uint256 e = d.currentEpoch();
         vm.prank(keeper);
+        vm.expectRevert(NutzDistributor.NotConverter.selector);
+        d.notifyEpochFunding(e, amounts(0, 0, 0, 0, 1e18), 0);
+    }
+
+    function test_funding_byAddressBelowTheConverter_reverts() public {
+        // The gate is equality, not order: an address numerically below the Converter is still not the Converter.
+        uint256 e = d.currentEpoch();
+        vm.prank(address(1));
         vm.expectRevert(NutzDistributor.NotConverter.selector);
         d.notifyEpochFunding(e, amounts(0, 0, 0, 0, 1e18), 0);
     }

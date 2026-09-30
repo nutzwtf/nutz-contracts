@@ -3,7 +3,7 @@
 set -u
 ok=0; bad=0
 check() {
-  printf '%-12s' "$1"
+  printf '%-15s' "$1"
   if command -v "$1" >/dev/null 2>&1; then echo "$($2 2>&1 | head -1)"; ok=$((ok+1)); else echo "MISSING"; bad=$((bad+1)); fi
 }
 check forge    "forge --version"
@@ -14,6 +14,9 @@ check slither  "slither --version"
 check aderyn   "aderyn --version"
 check z3       "z3 --version"
 check gitleaks "gitleaks version"
+check semgrep  "semgrep --version"
+check medusa   "medusa --version"
+check crytic-compile "crytic-compile --version"
 check node     "node --version"
 check pnpm     "pnpm --version"
 check uv       "uv --version"

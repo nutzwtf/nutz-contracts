@@ -6,6 +6,13 @@ on:
   schedule:
     - cron: "0 4 * * *"          # nightly fork tests
 
+# Read-only token for every job; nothing here writes to the repository. Actions are pinned to commit SHAs with the
+# release in the trailing comment (Dependabot bumps both), checkouts do not persist the token, and the zizmor job
+# audits this file. A compromised action cannot change deployed bytecode (forge verify-bytecode against the frozen
+# commit covers that), but it could read RPC_4663 in the fork job.
+permissions:
+  contents: read
+
 env:
   FOUNDRY_PROFILE: ci
 
@@ -13,34 +20,42 @@ jobs:
   forge:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with: { submodules: recursive }
-      - uses: foundry-rs/foundry-toolchain@v1
-        with: { version: v1.8.1 }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { submodules: recursive, persist-credentials: false }
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with: { version: v1.8.3 }
       - run: forge --version
       - run: forge build --sizes
       - run: forge fmt --check
       - run: forge lint
-      - run: forge test -vvv --no-match-path 'test/fork/**'
+      - run: forge test -vvv --no-match-path 'test/{fork,findings}/**'
+      # Same suite with dirty memory (high bits, scratch space, misaligned free-memory pointer): catches assembly
+      # that assumes clean words, i.e. the vendored BLS verifier. Cheap enough to run whole: 38 s against 25 s
+      # for the plain run on the default profile, so no --match-path restriction.
+      - run: forge test --brutalize --no-match-path 'test/{fork,findings}/**'
       # Gas regression gate on the deterministic unit tests only: fuzz medians move between machines even with a
       # fixed seed, invariant entries are run counts, and the fork suite is skipped here. Same filters regenerate
       # the committed file.
-      - run: forge snapshot --check --tolerance 5 --no-match-path 'test/fork/**' --no-match-test testFuzz --no-match-contract Invariant
-      - run: forge coverage --report lcov --report-file lcov.info --no-match-path 'test/fork/**'
-      - uses: actions/upload-artifact@v4
+      - run: forge snapshot --check --tolerance 5 --no-match-path 'test/{fork,findings}/**' --no-match-test testFuzz --no-match-contract Invariant
+      # Without the dynamic test linker: with it, forge 1.8.x (checked on 1.8.1 and 1.8.3) anchors some branches to
+      # the wrong instruction and reports them uncovered (NutzConverter constructor, token loop; 65/66 branches).
+      # The gate wants 100% branches on src/.
+      - run: forge coverage --no-dynamic-test-linking --report lcov --report-file lcov.info --no-match-path 'test/{fork,findings}/**'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: lcov, path: lcov.info }
+      - run: scripts/coverage-gate.sh lcov.info
 
   slither:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with: { submodules: recursive }
-      - uses: foundry-rs/foundry-toolchain@v1
-        with: { version: v1.8.1 }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { submodules: recursive, persist-credentials: false }
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with: { version: v1.8.3 }
       # Build here with the pinned forge: the action's container installs its own, whose lint fails the build.
       # Contracts only, and without the dynamic test linker, whose synthetic files crytic-compile cannot resolve.
       - run: forge build --build-info --no-dynamic-test-linking --skip './test/**' './script/**'
-      - uses: crytic/slither-action@v0.4.1
+      - uses: crytic/slither-action@4fd765aeef19915d04ddf0be90c2930036a774d8 # v0.4.1
         with:
           ignore-compile: true
           fail-on: medium              # documented false positives live in slither.config.json
@@ -49,25 +64,45 @@ jobs:
   aderyn:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with: { submodules: recursive }
-      - uses: foundry-rs/foundry-toolchain@v1
-        with: { version: v1.8.1 }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { submodules: recursive, persist-credentials: false }
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with: { version: v1.8.3 }
       - run: |                       # pinned release; cyfrinup installs to a path that is not on the runner's PATH
           curl -sSL https://github.com/Cyfrin/aderyn/releases/download/aderyn-v0.6.8/aderyn-x86_64-unknown-linux-gnu.tar.xz | tar -xJ
           aderyn-x86_64-unknown-linux-gnu/aderyn .
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: aderyn-report, path: report.md }
       - run: '! grep -q "^## High Issues" report.md'   # blocking on High until a native fail flag is confirmed
+
+  semgrep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      # Decurity rules at a pinned commit over src/ (vendor included); excluded rules and their reasons are in the
+      # script. Any finding fails the job (`--error`).
+      - run: pipx install semgrep==1.178.0
+      - run: scripts/semgrep.sh
 
   gitleaks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { fetch-depth: 0, persist-credentials: false }
       - run: |                       # the gitleaks-action needs a paid licence for organisation repos; the CLI does not
           curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz | tar -xz gitleaks
           ./gitleaks git --redact --no-banner --exit-code 1
+
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      # Audits this workflow: unpinned actions, template injection, permissions, credentials leaked into artifacts.
+      # The token only enables the online audits (impostor commits, known-vulnerable actions); it is read-only.
+      - run: pipx run zizmor==1.30.1 --min-severity medium .github/workflows/
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
 
   fork:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
@@ -75,10 +110,10 @@ jobs:
     env:
       RPC_4663: ${{ secrets.RPC_4663 }}
     steps:
-      - uses: actions/checkout@v4
-        with: { submodules: recursive }
-      - uses: foundry-rs/foundry-toolchain@v1
-        with: { version: v1.8.1 }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { submodules: recursive, persist-credentials: false }
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with: { version: v1.8.3 }
       # --fork-url resolves RPC_4663 before any test runs, so an empty secret would abort instead of self-skipping.
       - if: env.RPC_4663 != ''
         run: forge test -vvv --match-path 'test/fork/**' --fork-url robinhood --fork-retry-backoff 1000

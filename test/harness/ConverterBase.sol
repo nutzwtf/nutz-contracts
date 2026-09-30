@@ -73,6 +73,14 @@ abstract contract ConverterBase is Test {
 
     // ---- fixtures ----
 
+    /// @dev `new NutzConverter` behind an external call. Under forge's dynamic test linking (1.8, on by default)
+    ///      `vm.expectRevert` followed by a plain `new` of a linked contract lets the revert run up through the
+    ///      test, which still passes: only the first case of a multi-case test is ever checked. A call to
+    ///      `this` gives the cheatcode a frame to catch.
+    function deployConverter(NutzConverter.Params memory p) external returns (NutzConverter) {
+        return new NutzConverter(p);
+    }
+
     function signers() internal pure returns (address[3] memory) {
         return [vm.addr(KEY_A), vm.addr(KEY_B), vm.addr(KEY_C)];
     }

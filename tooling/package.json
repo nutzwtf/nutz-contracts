@@ -3,13 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Generates test/fixtures/*.json with @openzeppelin/merkle-tree (ADR-0001). Never run by forge test.",
+  "description": "Generates test/fixtures/*.json: Merkle claims with @openzeppelin/merkle-tree, BLS12-381 vectors with @noble/curves (ADR-0001). Never run by forge test.",
   "scripts": {
     "gen:fixtures": "node src/gen-fixtures.ts",
-    "verify-leaf": "node src/verify-leaf.ts"
+    "gen:bls-fixtures": "node src/gen-bls-fixtures.ts",
+    "verify-leaf": "node src/verify-leaf.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@noble/curves": "2.4.0",
     "@openzeppelin/merkle-tree": "1.0.8",
     "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.0",
+    "typescript": "^5.9.3"
   }
 }

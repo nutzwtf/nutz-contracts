@@ -82,9 +82,51 @@ contract SignersTest is Test {
         new SignersHarness([signerA, address(0), signerC], keeper);
     }
 
+    function test_constructor_rejectsZeroSigner_inEverySlot() public {
+        vm.expectRevert(Signers.ZeroAddress.selector);
+        new SignersHarness([address(0), signerB, signerC], keeper);
+        vm.expectRevert(Signers.ZeroAddress.selector);
+        new SignersHarness([signerA, signerB, address(0)], keeper);
+    }
+
     function test_constructor_rejectsDuplicateSigner() public {
         vm.expectRevert(Signers.DuplicateSigner.selector);
         new SignersHarness([signerA, signerB, signerA], keeper);
+    }
+
+    function test_constructor_rejectsEveryDuplicatePair() public {
+        vm.expectRevert(Signers.DuplicateSigner.selector);
+        new SignersHarness([signerA, signerA, signerC], keeper);
+        vm.expectRevert(Signers.DuplicateSigner.selector);
+        new SignersHarness([signerA, signerB, signerB], keeper);
+    }
+
+    /// @dev The six orderings of the three keys: the checks compare addresses for equality only, so numeric order
+    ///      must never matter, and a mutant that turns `==` into `<` or `>=` passes some orderings and not others.
+    function keyOrders() internal pure returns (uint256[3][6] memory) {
+        return [
+            [KEY_A, KEY_B, KEY_C],
+            [KEY_A, KEY_C, KEY_B],
+            [KEY_B, KEY_A, KEY_C],
+            [KEY_B, KEY_C, KEY_A],
+            [KEY_C, KEY_A, KEY_B],
+            [KEY_C, KEY_B, KEY_A]
+        ];
+    }
+
+    function addressesOf(uint256[3] memory keys) internal pure returns (address[3] memory) {
+        return [vm.addr(keys[0]), vm.addr(keys[1]), vm.addr(keys[2])];
+    }
+
+    function test_constructor_acceptsDistinctSigners_inAnyOrder() public {
+        uint256[3][6] memory orders = keyOrders();
+        for (uint256 i = 0; i < orders.length; i++) {
+            address[3] memory s = addressesOf(orders[i]);
+            SignersHarness g = new SignersHarness(s, keeper);
+            assertEq(g.signers(0), s[0]);
+            assertEq(g.signers(1), s[1]);
+            assertEq(g.signers(2), s[2]);
+        }
     }
 
     function test_constructor_rejectsZeroKeeper() public {
@@ -234,12 +276,41 @@ contract SignersTest is Test {
         h.ping(10, sign(KEY_A, sh), sign(KEY_C, sh));
     }
 
+    function test_executeRotation_replacesExactlyTheSlotOfFrom() public {
+        // Rotate each slot of a fresh contract, signed by the two signers that stay; the other two slots are
+        // untouched. Every ordering of the three signers, so the slot lookup cannot pass by comparing addresses.
+        vm.warp(1_000_000);
+        uint256[3][6] memory orders = keyOrders();
+        for (uint256 o = 0; o < orders.length; o++) {
+            uint256[3] memory keys = orders[o];
+            address[3] memory original = addressesOf(keys);
+            for (uint256 slot = 0; slot < 3; slot++) {
+                h = new SignersHarness(original, keeper);
+                proposeRotation(original[slot], signerX, keys[(slot + 1) % 3], keys[(slot + 2) % 3]);
+                vm.warp(block.timestamp + TIMELOCK);
+                h.executeSignerRotation(original[slot], signerX);
+                for (uint256 i = 0; i < 3; i++) {
+                    assertEq(h.signers(i), i == slot ? signerX : original[i], "slot");
+                }
+            }
+        }
+    }
+
     function test_executeRotation_afterExpiry_reverts() public {
         vm.warp(1_000_000);
         proposeRotation(signerC, signerX, KEY_A, KEY_B);
         vm.warp(block.timestamp + TIMELOCK + PROPOSAL_TTL + 1);
         vm.expectRevert(Signers.Expired.selector);
         h.executeSignerRotation(signerC, signerX);
+    }
+
+    function test_executeRotation_atTheLastSecondOfTheWindow_succeeds() public {
+        // The window is closed, `readyAt + PROPOSAL_TTL` included; a second later it is Expired.
+        vm.warp(1_000_000);
+        proposeRotation(signerC, signerX, KEY_A, KEY_B);
+        vm.warp(block.timestamp + TIMELOCK + PROPOSAL_TTL);
+        h.executeSignerRotation(signerC, signerX);
+        assertEq(h.signers(2), signerX);
     }
 
     function test_executeRotation_neverProposed_reverts() public {
@@ -267,6 +338,14 @@ contract SignersTest is Test {
         sh = rotateHash(signerA, address(0), 0);
         vm.expectRevert(Signers.ZeroAddress.selector);
         h.proposeSignerRotation(signerA, address(0), sign(KEY_A, sh), sign(KEY_B, sh));
+    }
+
+    function test_proposeRotation_rejectsNonSignerFrom_belowEverySignerAddress() public {
+        // Signer membership is equality, not order: an address numerically below every signer is not a signer.
+        address low = address(1);
+        bytes32 sh = rotateHash(low, signerX, 0);
+        vm.expectRevert(abi.encodeWithSelector(Signers.NotSigner.selector, low));
+        h.proposeSignerRotation(low, signerX, sign(KEY_A, sh), sign(KEY_B, sh));
     }
 
     function test_proposeRotation_whilePending_reverts() public {

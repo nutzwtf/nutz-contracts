@@ -148,6 +148,41 @@ contract ConverterRoutesTest is ConverterBase {
         }
     }
 
+    function test_v3_badLength_withTheRightEnds_revertsBadPath() public {
+        // A stray byte between the fee and the last token keeps both end tokens in place; only the length check
+        // can refuse it. Shorter than one address, the length check must speak before the address slices do.
+        usdg.mint(address(h), 500e6);
+        bytes memory strayByte = abi.encodePacked(address(usdg), uint24(500), uint8(0), address(spy)); // 44 bytes
+        bytes memory halfAddress = new bytes(18);
+        bytes memory empty;
+        bytes[3] memory bad = [strayByte, halfAddress, empty];
+        for (uint256 i = 0; i < 3; i++) {
+            vm.expectRevert(NutzConverter.BadPath.selector);
+            h.runLeg(NutzConverter.Leg.Spy, v3(bad[i], 0), 500e6);
+        }
+    }
+
+    function test_v3_threeHops_accepted() public {
+        // Any number of hops: the length rule is "20 + 23n", not a fixed size the first two hops happen to satisfy.
+        usdg.mint(address(h), 500e6);
+        bytes memory p = abi.encodePacked(
+            address(usdg), uint24(500), address(weth), uint24(3000), address(tok[1]), uint24(500), address(spy)
+        ); // 89 bytes
+        (bool ok, uint256 out,) = h.runLeg(NutzConverter.Leg.Spy, v3(p, 0), 500e6);
+        assertTrue(ok);
+        assertEq(out, 500e6 * USDG_SPY / 1e18);
+    }
+
+    function test_v3_wrongEndToken_aboveTheExpected_revertsBadPath() public {
+        // The end checks are equality, not order: a token above the expected one is as wrong as one below.
+        usdg.mint(address(h), 500e6);
+        address high = address(type(uint160).max);
+        vm.expectRevert(NutzConverter.BadPath.selector);
+        h.runLeg(NutzConverter.Leg.Spy, v3(path(high, 500, address(spy)), 0), 500e6);
+        vm.expectRevert(NutzConverter.BadPath.selector);
+        h.runLeg(NutzConverter.Leg.Spy, v3(path(address(usdg), 500, high), 0), 500e6);
+    }
+
     // ---- v3: approvals and ETH output ----
 
     function test_v3_erc20Input_exactApprovalZeroedOnSuccess() public {
@@ -201,6 +236,16 @@ contract ConverterRoutesTest is ConverterBase {
         vm.expectRevert(abi.encodeWithSelector(NutzConverter.BadVenue.selector, stranger));
         h.runLeg(NutzConverter.Leg.EthToUsdg, r, 1 ether);
     }
+
+    function test_unknownVenue_belowTheRouter_revertsBadVenue() public {
+        // The Venue check is equality, not order: an address below the router is not the router.
+        vm.deal(address(h), 1 ether);
+        NutzConverter.Route memory r = v3(path(address(weth), 100, address(usdg)), 0);
+        r.venue = address(1);
+        vm.expectRevert(abi.encodeWithSelector(NutzConverter.BadVenue.selector, address(1)));
+        h.runLeg(NutzConverter.Leg.EthToUsdg, r, 1 ether);
+    }
+
     // ---- v4: validation ----
 
     function test_v4_priceLimits_areOneStepInsideTickMath() public view {
@@ -221,6 +266,22 @@ contract ConverterRoutesTest is ConverterBase {
         vm.deal(address(h), 1 ether);
         vm.expectRevert(NutzConverter.BadPoolKey.selector);
         h.runLeg(NutzConverter.Leg.EthToUsdg, v4(poolKey(ETH, address(spy), address(0)), 0), 1 ether);
+    }
+
+    function test_v4_wrongCurrency_onEitherSideOfTheRightOne_revertsBadPoolKey() public {
+        // The currency checks are equality, not order.
+        usdg.mint(address(h), 500e6);
+        PoolKey memory k = poolKey(address(usdg), address(spy), address(0));
+        address low = address(1);
+        address high = address(type(uint160).max);
+        (Currency c0, Currency c1) = (k.currency0, k.currency1);
+        Currency[3][2] memory bad = [[Currency.wrap(low), Currency.wrap(high), c0], [c1, c1, Currency.wrap(high)]];
+        for (uint256 i = 0; i < 3; i++) {
+            k.currency0 = bad[0][i];
+            k.currency1 = bad[1][i];
+            vm.expectRevert(NutzConverter.BadPoolKey.selector);
+            h.runLeg(NutzConverter.Leg.Spy, v4(k, 0), 500e6);
+        }
     }
 
     function test_v4_malformedData_revertsBadPoolKey() public {
@@ -245,6 +306,16 @@ contract ConverterRoutesTest is ConverterBase {
 
     function test_unlockCallback_fromStranger_revertsNotPoolManager() public {
         vm.prank(stranger);
+        vm.expectRevert(NutzConverter.NotPoolManager.selector);
+        h.unlockCallback("");
+    }
+
+    function test_unlockCallback_fromEitherSideOfTheManager_revertsNotPoolManager() public {
+        // The caller check is equality, not order.
+        vm.prank(address(1));
+        vm.expectRevert(NutzConverter.NotPoolManager.selector);
+        h.unlockCallback("");
+        vm.prank(address(type(uint160).max));
         vm.expectRevert(NutzConverter.NotPoolManager.selector);
         h.unlockCallback("");
     }
@@ -316,6 +387,17 @@ contract ConverterRoutesTest is ConverterBase {
         assertEq(reason, abi.encodeWithSelector(NutzConverter.PartialFill.selector, 0.4 ether, 1 ether));
         assertEq(address(h).balance, 1 ether, "ETH stays");
     }
+
+    function test_v4_overfill_isCaughtFailure() public {
+        // A hook charging more input than the order is as wrong as a pool absorbing less.
+        PoolKey memory k = ethUsdgPool();
+        pm.setOverfill(k, true, 0.2 ether);
+        (bool ok,, bytes memory reason) = h.runLeg(NutzConverter.Leg.EthToUsdg, v4(k, 0), 1 ether);
+        assertFalse(ok);
+        assertEq(reason, abi.encodeWithSelector(NutzConverter.PartialFill.selector, 1.2 ether, 1 ether));
+        assertEq(address(h).balance, 1 ether, "ETH stays");
+    }
+
     // ---- guards ----
 
     function test_zeroAmountIn_succeedsWithNothingOutAndNoVenueCall() public {
@@ -349,7 +431,19 @@ contract ConverterRoutesTest is ConverterBase {
         NutzConverter.Params memory p = params();
         p.v3Router = address(otherRouter);
         vm.expectRevert(abi.encodeWithSelector(NutzConverter.WethMismatch.selector, address(other)));
-        new NutzConverter(p);
+        this.deployConverter(p);
+    }
+
+    function test_constructor_rejectsRouterWithWethOnEitherSideOfOurs() public {
+        // The WETH check is equality, not order: a router naming a WETH below or above ours is refused alike.
+        address[2] memory others = [address(1), address(type(uint160).max)];
+        for (uint256 i = 0; i < 2; i++) {
+            MockSwapRouter02 otherRouter = new MockSwapRouter02(others[i]);
+            NutzConverter.Params memory p = params();
+            p.v3Router = address(otherRouter);
+            vm.expectRevert(abi.encodeWithSelector(NutzConverter.WethMismatch.selector, others[i]));
+            this.deployConverter(p);
+        }
     }
 
     // ---- strict ----

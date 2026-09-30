@@ -2,7 +2,9 @@
 pragma solidity 0.8.37;
 
 import {NutzDistributor} from "../../src/NutzDistributor.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
+import {MockFalseReturnERC20, MockNoReturnERC20} from "../mocks/MockQuirkyERC20.sol";
 import {DistributorBase} from "../harness/DistributorBase.sol";
 
 contract DistributorClaimTest is DistributorBase {
@@ -145,6 +147,94 @@ contract DistributorClaimTest is DistributorBase {
         assertEq(tok[0].balanceOf(alice), 1e18);
     }
 
+    function test_claim_paidLegs_leaveNothingStuck() public {
+        uint256 e = DEPLOY_EPOCH;
+        fundPostFinalize(e, claims);
+        d.claim(EPOCH, e, alice, claims[0].amounts, proofOf(e, claims, 0));
+        uint256[5] memory s = d.stuck(alice);
+        for (uint256 i = 0; i < 5; i++) {
+            assertEq(s[i], 0, "a transfer that succeeded is not stuck");
+        }
+    }
+
+    function test_claim_zeroLeg_neverCallsTransfer() public {
+        uint256 e = DEPLOY_EPOCH;
+        fundPostFinalize(e, claims);
+        // alice's leaf carries no NVDA (token 1): a zero transfer is skipped, not attempted.
+        vm.expectCall(address(tok[1]), abi.encodeCall(tok[1].transfer, (alice, 0)), 0);
+        d.claim(EPOCH, e, alice, claims[0].amounts, proofOf(e, claims, 0));
+    }
+
+    function test_claim_stuckAccumulatesAcrossClaims() public {
+        // Two epochs claimed one at a time while SPY is paused: the record is the sum of both legs.
+        uint256 e = DEPLOY_EPOCH;
+        fundPostFinalize(e, claims);
+        closeEpoch(e + 1);
+        fundPostFinalize(e + 1, claims);
+        tok[0].setPaused(true);
+        d.claim(EPOCH, e, alice, claims[0].amounts, proofOf(e, claims, 0));
+        d.claim(EPOCH, e + 1, alice, claims[0].amounts, proofOf(e + 1, claims, 0));
+        assertEq(d.stuck(alice)[0], 2e18);
+    }
+
+    function test_claim_tokenReturningFalse_isRecordedStuck() public {
+        (MockFalseReturnERC20 falseToken,) = redeployWithQuirkyTokens();
+        Claim[] memory one = new Claim[](1);
+        one[0] = Claim(alice, amounts(1e18, 0, 0, 0, 0));
+        uint256 e = fundCurrentEpochAndFinalize(one);
+
+        falseToken.setRefusing(true);
+        vm.expectEmit(address(d));
+        emit NutzDistributor.Stuck(alice, 0, 1e18);
+        d.claim(EPOCH, e, alice, one[0].amounts, proofOf(e, one, 0));
+        assertEq(falseToken.balanceOf(alice), 0);
+        assertEq(d.stuck(alice)[0], 1e18, "a false return is a failed transfer");
+    }
+
+    function test_claim_tokenReturningNothing_isPaid() public {
+        (, MockNoReturnERC20 silentToken) = redeployWithQuirkyTokens();
+        Claim[] memory one = new Claim[](1);
+        one[0] = Claim(alice, amounts(0, 2e18, 0, 0, 0));
+        uint256 e = fundCurrentEpochAndFinalize(one);
+
+        d.claim(EPOCH, e, alice, one[0].amounts, proofOf(e, one, 0));
+        assertEq(silentToken.balanceOf(alice), 2e18, "an empty return is a success");
+        assertEq(d.stuck(alice)[1], 0);
+    }
+
+    /// @dev The redeployed Distributor's first open Epoch: fund it, close it, post the Root, close the window.
+    function fundCurrentEpochAndFinalize(Claim[] memory one) internal returns (uint256 e) {
+        e = d.currentEpoch();
+        fund(e, totalsOf(one), 0);
+        closeEpoch(e);
+        postRoot(EPOCH, e, rootOf(e, one), totalsOf(one));
+        vm.warp(block.timestamp + 30 minutes);
+    }
+
+    /// @dev Replaces `d` with a Distributor whose SPY returns `false` when refusing and whose NVDA returns nothing.
+    function redeployWithQuirkyTokens()
+        internal
+        returns (MockFalseReturnERC20 falseToken, MockNoReturnERC20 silentToken)
+    {
+        falseToken = new MockFalseReturnERC20();
+        silentToken = new MockNoReturnERC20();
+        IERC20[5] memory t = tokens();
+        t[0] = IERC20(address(falseToken));
+        t[1] = IERC20(address(silentToken));
+        address[] memory excludedBase = new address[](1);
+        excludedBase[0] = dead;
+        d = deploy(converter, t, MIN_RATE, MAX_RATE, excludedBase);
+        falseToken.mint(converter, 10e18);
+        silentToken.mint(converter, 10e18);
+        vm.startPrank(converter);
+        falseToken.approve(address(d), type(uint256).max);
+        silentToken.approve(address(d), type(uint256).max);
+        for (uint256 i = 2; i < 5; i++) {
+            tok[i].approve(address(d), type(uint256).max);
+        }
+        vm.stopPrank();
+    }
+
     // ---- claimMany ----
 
     function test_claimMany_settlesSeveralEpochsForOneAccount() public {
@@ -185,6 +275,53 @@ contract DistributorClaimTest is DistributorBase {
         vm.expectRevert(NutzDistributor.InvalidProof.selector);
         d.claimMany(EPOCH, ids, alice, am, proofs);
         assertFalse(d.claimed(EPOCH, e, alice));
+    }
+
+    function test_claimMany_lengthMismatch_reverts() public {
+        uint256 e = DEPLOY_EPOCH;
+        fundPostFinalize(e, claims);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = e;
+        uint256[5][] memory am1 = new uint256[5][](1);
+        am1[0] = claims[0].amounts;
+        bytes32[][] memory proofs1 = new bytes32[][](1);
+        proofs1[0] = proofOf(e, claims, 0);
+
+        vm.expectRevert(NutzDistributor.LengthMismatch.selector);
+        d.claimMany(EPOCH, ids, alice, new uint256[5][](2), proofs1);
+        vm.expectRevert(NutzDistributor.LengthMismatch.selector);
+        d.claimMany(EPOCH, ids, alice, am1, new bytes32[][](2));
+        assertFalse(d.claimed(EPOCH, e, alice));
+    }
+
+    function test_claimMany_lengthMismatch_reverts_inEitherDirection() public {
+        // More ids than amounts or proofs is the mismatch, not an out-of-bounds read.
+        uint256 e = DEPLOY_EPOCH;
+        fundPostFinalize(e, claims);
+        uint256[] memory two = new uint256[](2);
+        two[0] = e;
+        two[1] = e;
+        uint256[5][] memory am1 = new uint256[5][](1);
+        am1[0] = claims[0].amounts;
+        bytes32[][] memory proofs1 = new bytes32[][](1);
+        proofs1[0] = proofOf(e, claims, 0);
+
+        vm.expectRevert(NutzDistributor.LengthMismatch.selector);
+        d.claimMany(EPOCH, two, alice, am1, new bytes32[][](2));
+        vm.expectRevert(NutzDistributor.LengthMismatch.selector);
+        d.claimMany(EPOCH, two, alice, new uint256[5][](2), proofs1);
+    }
+
+    function test_claim_ledgerClaimedIsTheSumOfTheLeaves() public {
+        // alice then bob on one Epoch: 100 + 50 USDG, a sum that xor or or would not reproduce.
+        uint256 e = DEPLOY_EPOCH;
+        fundPostFinalize(e, claims);
+        d.claim(EPOCH, e, alice, claims[0].amounts, proofOf(e, claims, 0));
+        d.claim(EPOCH, e, bob, claims[1].amounts, proofOf(e, claims, 1));
+        NutzDistributor.Ledger memory L = d.ledger(EPOCH, e);
+        assertEq(L.claimed[4], 150e18);
+        assertEq(L.claimed[0], 1e18);
+        assertEq(L.claimed[1], 2e18);
     }
 
     // ---- parity with the JS library (ADR-0001) ----

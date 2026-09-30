@@ -23,3 +23,12 @@ report.md
 
 # tooling/
 node_modules/
+
+# fuzz / invariant corpora (foundry.toml corpus_dir and medusa.json corpusDirectory; coverage-guided fuzzing
+# state, machine-local; Medusa's coverage and revert reports land under corpus/medusa/<target>/coverage/)
+corpus/
+# Medusa's compilation export (crytic-compile writes it beside out/)
+crytic-export/
+
+# Decurity Semgrep rules, cloned at a pinned commit by scripts/semgrep.sh
+semgrep-rules/

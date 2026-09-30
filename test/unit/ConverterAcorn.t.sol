@@ -120,6 +120,29 @@ contract ConverterAcornTest is ConverterBase {
         assertConverterEmpty();
     }
 
+    function test_convertAcorn_deadlineInTheFuture_isAccepted() public {
+        // The deadline is a bound, not an exact time (see the Sweep's twin).
+        accumulateAcorn(1 ether);
+        vm.prank(keeper);
+        c.convertAcorn(drawId, routes(), block.timestamp + 1 hours);
+        assertEq(drawFunded(drawId)[0], 75e6 * STOCK_RATES[0] / 1e18);
+    }
+
+    function test_convertAcorn_convertsThePoolOnly_notUsdgHeldBeforehand() public {
+        // USDG sent to the Converter by a stranger is not the Acorn pool: the conversion is sized by the pull.
+        accumulateAcorn(1 ether);
+        usdg.mint(address(c), 123e6);
+        uint256[5] memory expected;
+        for (uint256 i = 0; i < 4; i++) {
+            expected[i] = 75e6 * STOCK_RATES[i] / 1e18;
+        }
+        vm.expectEmit(address(c));
+        emit NutzConverter.AcornConverted(drawId, 300e6, expected);
+        convert(drawId, routes());
+        assertEq(drawFunded(drawId)[0], 75e6 * STOCK_RATES[0] / 1e18);
+        assertEq(usdg.balanceOf(address(c)), 123e6, "the stray USDG stays");
+    }
+
     function test_quarteringDust_staysUsdg() public {
         // 0.98 ETH at 3,000.000005 USDG/ETH -> 2,940.000004 USDG; Acorn 300.000001, so 75 USDG per stock and
         // one unit of USDG that no Leg gets.

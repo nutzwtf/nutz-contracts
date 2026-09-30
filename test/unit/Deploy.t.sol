@@ -48,6 +48,18 @@ contract DeployTest is Test {
         assertEq(address(c.DISTRIBUTOR()), address(d), "the Converter names the Distributor");
     }
 
+    function test_deploy_excludesTheContractsAndThePoolManager_afterTheConfigsEntries() public {
+        // Review 2026-09, F02: the config carried the dead address alone; the script adds what only it knows.
+        Deploy.Params memory p = params();
+        (NutzDistributor d, NutzConverter c,) = script.deploy(p, address(script));
+        address[] memory excluded = d.excluded();
+        assertEq(excluded.length, 4);
+        assertEq(excluded[0], 0x000000000000000000000000000000000000dEaD, "the config's entries come first");
+        assertEq(excluded[1], address(d), "the Distributor excludes itself");
+        assertEq(excluded[2], address(c), "and the Converter");
+        assertEq(excluded[3], p.v4PoolManager, "and the v4 PoolManager, which holds the graduated pool's NUTZ");
+    }
+
     function test_deploy_drawNamesTheDistributor() public {
         // the Draw's constructor self-test runs against the local prague precompiles here
         (NutzDistributor d,, NutzDraw draw) = script.deploy(params(), address(script));
@@ -81,19 +93,20 @@ contract DeployTest is Test {
         assertEq(c.keeper(), p.keeper);
     }
 
-    function test_deploy_revertsWhenTheConverterMissesThePrediction() public {
+    function test_deploy_revertsWhenTheDeployerIsNotThePredictedOne() public {
         // predicted for one deployer, created by another: the Distributor's immutable would name an address the
-        // Converter never lands on, so `deploy` must refuse rather than leave that Distributor behind
+        // Converter never lands on, and its Excluded list an address it does not sit at, so `deploy` must refuse
+        // rather than leave that Distributor behind; the Distributor's own prediction is the first to miss
         Deploy.Params memory p = params();
         address other = makeAddr("other-deployer");
-        address predicted = vm.computeCreateAddress(other, vm.getNonce(other) + 1);
-        address actual = vm.computeCreateAddress(address(script), vm.getNonce(address(script)) + 1);
-        vm.expectRevert(abi.encodeWithSelector(Deploy.UnexpectedConverterAddress.selector, predicted, actual));
+        address predicted = vm.computeCreateAddress(other, vm.getNonce(other));
+        address actual = vm.computeCreateAddress(address(script), vm.getNonce(address(script)));
+        vm.expectRevert(abi.encodeWithSelector(Deploy.UnexpectedAddress.selector, predicted, actual));
         script.deploy(p, other);
     }
 
     function test_check_revertsOnMismatch() public {
-        vm.expectRevert(abi.encodeWithSelector(Deploy.UnexpectedConverterAddress.selector, address(1), address(2)));
+        vm.expectRevert(abi.encodeWithSelector(Deploy.UnexpectedAddress.selector, address(1), address(2)));
         script.check(address(1), address(2));
     }
 
@@ -122,7 +135,7 @@ contract DeployTest is Test {
         assertEq(address(p.tokens[3]), 0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa, "SPCX");
         assertEq(address(p.tokens[4]), 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168, "USDG");
         assertEq(p.pushGasBase, 100_000);
-        assertEq(p.minUsdgPerEth, 1_000e6);
+        assertEq(p.minUsdgPerEth, 2_000e6); // ~80% of spot on the day it was set (review 2026-09, F06)
         assertEq(p.excludedBase.length, 1);
         assertEq(p.weth, 0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73, "WETH");
         assertEq(p.v3Router, 0xCaf681a66D020601342297493863E78C959E5cb2, "v3 router");

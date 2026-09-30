@@ -93,6 +93,60 @@ contract DistributorPushTest is DistributorBase {
         assertFalse(d.claimed(EPOCH, e, alice));
     }
 
+    function test_push_twoEntries_feesAddUpForTheKeeper() public {
+        // Two identical fees: a sum that is not an addition (xor, or) would pay the keeper 0 or one fee.
+        uint256 e = DEPLOY_EPOCH;
+        fundPostFinalize(e, claims);
+        NutzDistributor.PushEntry[] memory entries = new NutzDistributor.PushEntry[](2);
+        entries[0] = entryFor(alice, EPOCH, ids1(e), claims[0].amounts, claims, 0);
+        entries[1] = entryFor(bob, EPOCH, ids1(e), claims[1].amounts, claims, 1);
+        push(entries);
+        assertEq(tok[4].balanceOf(keeper), 2 * ONE_LEAF_FEE);
+        assertEq(tok[4].balanceOf(alice), 100e6 - ONE_LEAF_FEE);
+        assertEq(tok[4].balanceOf(bob), 1.12e6 - ONE_LEAF_FEE);
+    }
+
+    function test_push_lengthMismatch_reverts_inEitherDirection() public {
+        // More ids than amounts or proofs is the mismatch, not an out-of-bounds read.
+        uint256 e = DEPLOY_EPOCH;
+        fundPostFinalize(e, claims);
+        uint256[] memory two = new uint256[](2);
+        two[0] = e;
+        two[1] = e;
+        NutzDistributor.PushEntry[] memory entries = new NutzDistributor.PushEntry[](1);
+        entries[0] = entryFor(alice, EPOCH, ids1(e), claims[0].amounts, claims, 0);
+        entries[0].ids = two;
+        entries[0].proofs = new bytes32[][](2);
+        vm.prank(keeper);
+        vm.expectRevert(NutzDistributor.LengthMismatch.selector);
+        d.pushClaims(entries, GAS_PRICE, RATE);
+
+        entries[0] = entryFor(alice, EPOCH, ids1(e), claims[0].amounts, claims, 0);
+        entries[0].ids = two;
+        entries[0].amounts = new uint256[5][](2);
+        vm.prank(keeper);
+        vm.expectRevert(NutzDistributor.LengthMismatch.selector);
+        d.pushClaims(entries, GAS_PRICE, RATE);
+    }
+
+    function test_push_lengthMismatch_reverts() public {
+        uint256 e = DEPLOY_EPOCH;
+        fundPostFinalize(e, claims);
+        NutzDistributor.PushEntry[] memory entries = new NutzDistributor.PushEntry[](1);
+        entries[0] = entryFor(alice, EPOCH, ids1(e), claims[0].amounts, claims, 0);
+        entries[0].amounts = new uint256[5][](2);
+        vm.prank(keeper);
+        vm.expectRevert(NutzDistributor.LengthMismatch.selector);
+        d.pushClaims(entries, GAS_PRICE, RATE);
+
+        entries[0] = entryFor(alice, EPOCH, ids1(e), claims[0].amounts, claims, 0);
+        entries[0].proofs = new bytes32[][](2);
+        vm.prank(keeper);
+        vm.expectRevert(NutzDistributor.LengthMismatch.selector);
+        d.pushClaims(entries, GAS_PRICE, RATE);
+        assertFalse(d.claimed(EPOCH, e, alice));
+    }
+
     function test_push_rateOutsideRange_reverts() public {
         uint256 e = DEPLOY_EPOCH;
         fundPostFinalize(e, claims);
@@ -167,6 +221,14 @@ contract DistributorPushTest is DistributorBase {
         d.setRateRange(2_000e6, 3_000e6, sign(KEY_A, sh), sign(KEY_C, sh));
         assertEq(d.minUsdgPerEth(), 2_000e6);
         assertEq(d.maxUsdgPerEth(), 3_000e6);
+    }
+
+    function test_setRateRange_pointRange_isAccepted() public {
+        // `min > max` is the invalid case; `min == max` pins the rate to one value and is allowed, as at deploy.
+        bytes32 sh = keccak256(abi.encode(SET_RATE_RANGE_TYPEHASH, uint256(2_500e6), uint256(2_500e6), d.nonce()));
+        d.setRateRange(2_500e6, 2_500e6, sign(KEY_A, sh), sign(KEY_C, sh));
+        assertEq(d.minUsdgPerEth(), 2_500e6);
+        assertEq(d.maxUsdgPerEth(), 2_500e6);
     }
 
     function test_setRateRange_invalid_reverts() public {

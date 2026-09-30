@@ -35,6 +35,7 @@ contract MockPoolManager {
     mapping(PoolId => mapping(bool zeroForOne => uint256)) public rate; // output units per 1e18 input units
     mapping(PoolId => bool) public reverts;
     mapping(PoolId => mapping(bool zeroForOne => uint256)) public maxFill; // most input one swap absorbs; 0 = no cap
+    mapping(PoolId => mapping(bool zeroForOne => uint256)) public overfill; // extra input a swap charges (a hostile hook)
 
     bool private unlocked;
     Currency private synced;
@@ -58,6 +59,10 @@ contract MockPoolManager {
 
     function setMaxFill(PoolKey calldata key, bool zeroForOne, uint256 cap) external {
         maxFill[key.toId()][zeroForOne] = cap;
+    }
+
+    function setOverfill(PoolKey calldata key, bool zeroForOne, uint256 extra) external {
+        overfill[key.toId()][zeroForOne] = extra;
     }
 
     function unlock(bytes calldata data) external returns (bytes memory result) {
@@ -90,12 +95,13 @@ contract MockPoolManager {
         uint256 cap = maxFill[id][params.zeroForOne];
         if (cap != 0 && amountIn > cap) amountIn = cap;
         uint256 amountOut = amountIn * r / 1e18;
+        uint256 charged = amountIn + overfill[id][params.zeroForOne];
         (Currency cin, Currency cout) =
             params.zeroForOne ? (key.currency0, key.currency1) : (key.currency1, key.currency0);
-        _account(cin, -int256(amountIn));
+        _account(cin, -int256(charged));
         _account(cout, int256(amountOut));
 
-        int128 inDelta = -SafeCast.toInt128(amountIn);
+        int128 inDelta = -SafeCast.toInt128(charged);
         int128 outDelta = SafeCast.toInt128(amountOut);
         swapDelta = params.zeroForOne ? toBalanceDelta(inDelta, outDelta) : toBalanceDelta(outDelta, inDelta);
     }
