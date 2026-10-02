@@ -15,8 +15,10 @@ import {Signers} from "../src/Signers.sol";
 ///         construction, the Signers wire it later through `proposeDrawContract` / `executeDrawContract` (48h),
 ///         and its constructor self-test proves the EIP-2537 precompiles are live on the target chain (ADR-0004).
 ///
-///   forge script script/Deploy.s.sol --rpc-url robinhood --account nutz-dev --broadcast --verify \
-///     --verifier blockscout --verifier-url https://robinhoodchain.blockscout.com/api/
+///   forge script script/Deploy.s.sol --rpc-url robinhood --account nutz-dev --broadcast
+///
+///   Without `--verify`: Blockscout's API answers forge with a Cloudflare challenge on chain 4663 (2026-10-02).
+///   Verification is `scripts/verify-deploy.sh` afterwards (bytecode, Sourcify) and the Blockscout UI.
 ///
 ///   Launch day (engineering-spec §10): after `launchAndBuy` names the Converter as creator fee recipient, the
 ///   Keeper calls `converter.bindNutz(NUTZ)`; the Sweep pulls no Pons fees until then. Before the first Sunday the
@@ -40,6 +42,8 @@ contract Deploy is Script {
         uint256 opsCapWei;
     }
 
+    string internal constant CONFIG = "/script/config/robinhood.json";
+
     error UnexpectedAddress(address predicted, address actual);
     /// @dev The config repeats an address the script appends itself, or names the zero address; the constructor
     ///      would store and emit it as given (`executeExclusion` refuses both), so the script refuses it first.
@@ -49,7 +53,7 @@ contract Deploy is Script {
     /// @notice The launch deploy: the Distributor and the Converter. The Draw is a later stage (`runDraw`), under
     ///         the scope rule of engineering-spec §6 (review 2026-09, F09).
     function run() external {
-        Params memory p = load(string.concat(vm.projectRoot(), "/script/config/robinhood.json"));
+        Params memory p = load(string.concat(vm.projectRoot(), CONFIG));
         address deployer = msg.sender; // the --account / --sender forge broadcasts with
         vm.startBroadcast();
         (NutzDistributor d, NutzConverter c) = deployCore(p, deployer);
@@ -67,6 +71,64 @@ contract Deploy is Script {
         vm.stopBroadcast();
         console.log("NutzDraw", address(draw));
         console.log("The Signers wire it: proposeDrawContract(draw, sig1, sig2), 48h, executeDrawContract(draw)");
+    }
+
+    /// @notice Prints the ABI-encoded constructor arguments of the three contracts as deployed from the config,
+    ///         for `scripts/verify-deploy.sh` (engineering-spec §10 step 2, launch gate item 9):
+    ///         `--sig "args(address,address)" <distributor> <converter>`. Nothing is sent.
+    function args(address distributor, address converter) external view {
+        Params memory p = load(string.concat(vm.projectRoot(), CONFIG));
+        console.log("distributor-args", vm.toString(distributorArgs(p, distributor, converter)));
+        console.log("converter-args", vm.toString(converterArgs(p, distributor)));
+        console.log("draw-args", vm.toString(drawArgs(distributor)));
+    }
+
+    /// @dev The Distributor's constructor arguments exactly as `deployCore` passes them: the Converter the
+    ///      Distributor names is the one that was deployed, and the Excluded list carries the script's three
+    ///      appended entries.
+    function distributorArgs(Params memory p, address distributor, address converter)
+        public
+        pure
+        returns (bytes memory)
+    {
+        return abi.encode(
+            p.signers,
+            p.keeper,
+            converter,
+            p.tokens,
+            p.pushGasBase,
+            p.pushGasPerLeaf,
+            p.minUsdgPerEth,
+            p.maxUsdgPerEth,
+            excludedBase(p, distributor, converter)
+        );
+    }
+
+    /// @dev The Converter's constructor arguments: the one struct `deployCore` passes.
+    function converterArgs(Params memory p, address distributor) public pure returns (bytes memory) {
+        return abi.encode(converterParams(p, distributor));
+    }
+
+    /// @dev The Converter's constructor struct from the config and the Distributor it serves.
+    function converterParams(Params memory p, address distributor) public pure returns (NutzConverter.Params memory) {
+        return NutzConverter.Params({
+            signers: p.signers,
+            keeper: p.keeper,
+            distributor: distributor,
+            tokens: p.tokens,
+            weth: p.weth,
+            v3Router: p.v3Router,
+            v4PoolManager: p.v4PoolManager,
+            ponsFactory: p.ponsFactory,
+            ponsEscrow: p.ponsEscrow,
+            ponsHook: p.ponsHook,
+            opsCap: p.opsCapWei
+        });
+    }
+
+    /// @dev The Draw's single constructor argument.
+    function drawArgs(address distributor) public pure returns (bytes memory) {
+        return abi.encode(distributor);
     }
 
     /// @dev All three in one go, for the tests and the fork suite; the two stages live in `deployCore` and
@@ -96,21 +158,7 @@ contract Deploy is Script {
             p.maxUsdgPerEth,
             excludedBase(p, predictedDistributor, predictedConverter)
         );
-        c = new NutzConverter(
-            NutzConverter.Params({
-                signers: p.signers,
-                keeper: p.keeper,
-                distributor: address(d),
-                tokens: p.tokens,
-                weth: p.weth,
-                v3Router: p.v3Router,
-                v4PoolManager: p.v4PoolManager,
-                ponsFactory: p.ponsFactory,
-                ponsEscrow: p.ponsEscrow,
-                ponsHook: p.ponsHook,
-                opsCap: p.opsCapWei
-            })
-        );
+        c = new NutzConverter(converterParams(p, address(d)));
         check(predictedDistributor, address(d));
         check(predictedConverter, address(c));
         checkRoles(d, c);

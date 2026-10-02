@@ -18,7 +18,7 @@ Robinhood Chain (chain id 4663). Addresses are filled in at deploy, with the fro
 |---|---|---|---|
 | `NutzDistributor` (with `Signers`) | `src/NutzDistributor.sol`, `src/Signers.sol` | TBD at deploy | TBD at deploy |
 | `NutzConverter` | `src/NutzConverter.sol` | TBD at deploy | TBD at deploy |
-| `NutzDraw` (with the vendored BLS12-381 verifier `src/vendor/bls/`) | `src/NutzDraw.sol` | TBD at deploy (deployed after launch, see the engineering spec §6 scope rule) | TBD at deploy |
+| `NutzDraw` (with the vendored BLS12-381 verifier `src/vendor/bls/`) | `src/NutzDraw.sol` | TBD at deploy (its own deploy stage, wired through the 48 h timelock once its gate is green; engineering spec §6 scope rule) | TBD at deploy |
 
 Verify an address before you spend time on it: the only authoritative sources are this file, nutz.wtf and @stacknutz. The deployed bytecode is verified on Blockscout and Sourcify and checked with `forge verify-bytecode` against the commit in the table.
 

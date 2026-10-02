@@ -163,8 +163,9 @@ BLS verifier beyond its vector suites (`src/vendor/bls/` was read by the Draw re
 handling and the encoding, not audited as a library).
 
 Standing risks the reader should carry: the contracts are not externally audited (the External audit is
-post-launch, whitepaper decision #9); the Draw is deployed after launch through the 48-hour timelock once its
-own gate items are green (spec §6 item 10), and until then the Acorn pool accumulates in the Distributor; the
+post-launch, whitepaper decision #9); the Draw is deployed only once its
+own gate items are green (spec §6 item 10; decided 2026-10-02: at the launch deploy, since they are, wired through
+the 48-hour timelock before the Launch), and until it is wired the Acorn pool accumulates in the Distributor; the
 Keeper remains a trusted-for-liveness role whose compromise is bounded by the push-fee cap, the Signer-set
 rate floor (as tight as the Signers keep it, F06) and the 2-of-3 on every Root; the sequencer's clock is the
 contracts' clock (the 30-minute Dispute window and the Draw's 10-minute lead are measured on it); and a Stock

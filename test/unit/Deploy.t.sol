@@ -146,9 +146,12 @@ contract DeployTest is Test {
         assertEq(address(p.tokens[2]), 0xfF080c8ce2E5feadaCa0Da81314Ae59D232d4afD, "MU");
         assertEq(address(p.tokens[3]), 0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa, "SPCX");
         assertEq(address(p.tokens[4]), 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168, "USDG");
-        assertEq(p.pushGasBase, 100_000);
+        assertEq(p.pushGasBase, 175_000, "measured, test/fork/PushGasFork.t.sol");
+        assertEq(p.pushGasPerLeaf, 170_000, "the cold extra leaf");
         assertEq(p.minUsdgPerEth, 2_000e6); // ~80% of spot on the day it was set (review 2026-09, F06)
-        assertEq(p.excludedBase.length, 1);
+        assertEq(p.excludedBase.length, 3, "dead address, Pons locker, Pons buyback vault");
+        assertEq(p.excludedBase[1], 0x267444D099b10fB5Ed7c3Cc7B7c767AdcA574952, "factory.locker()");
+        assertEq(p.excludedBase[2], 0x42df2a798f82289E177311362e8f5ccC45c1219c, "factory.buybackVault()");
         assertEq(p.weth, 0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73, "WETH");
         assertEq(p.v3Router, 0xCaf681a66D020601342297493863E78C959E5cb2, "v3 router");
         assertEq(p.v4PoolManager, 0x8366a39CC670B4001A1121B8F6A443A643e40951, "v4 pool manager");
@@ -156,5 +159,79 @@ contract DeployTest is Test {
         assertEq(p.ponsEscrow, 0xd3AFEB2a57f70eF218Aa82451c51B2fb0416Ac9e, "Pons escrow");
         assertEq(p.ponsHook, 0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044, "Pons hook");
         assertEq(p.opsCapWei, 0.5 ether, "ops cap");
+    }
+
+    // ------------------------------------------------- constructor args for the post-deploy bytecode check
+
+    /// @dev `scripts/verify-deploy.sh` rebuilds each creation code as `creationCode ++ args` and compares it with
+    ///      the creation transaction, then re-runs it at the deployed address to compare runtime code. The encoders
+    ///      must therefore produce exactly what `deployCore` / `deployDraw` passed: a twin deployed from them
+    ///      carries every argument in the same slot. (Code hashes are compared only for the Draw: `Signers` is
+    ///      EIP-712, whose cached domain separator is an immutable derived from the contract's own address, so a
+    ///      twin at another address differs there by design.)
+    function test_args_distributorTwinCarriesEveryArgument() public {
+        Deploy.Params memory p = params();
+        (NutzDistributor d, NutzConverter c,) = script.deploy(p, address(script));
+        bytes memory args = script.distributorArgs(p, address(d), address(c));
+        NutzDistributor twin = NutzDistributor(create(abi.encodePacked(type(NutzDistributor).creationCode, args)));
+        assertEq(twin.CONVERTER(), address(c), "the Converter that was deployed, not a prediction");
+        assertEq(twin.PUSH_GAS_BASE(), p.pushGasBase);
+        assertEq(twin.PUSH_GAS_PER_LEAF(), p.pushGasPerLeaf);
+        assertEq(twin.minUsdgPerEth(), p.minUsdgPerEth);
+        assertEq(twin.maxUsdgPerEth(), p.maxUsdgPerEth);
+        assertEq(twin.excluded(), d.excluded(), "the config's entries, then the script's three");
+        assertEq(twin.keeper(), p.keeper);
+        for (uint256 i = 0; i < 5; i++) {
+            assertEq(address(twin.tokens(i)), address(p.tokens[i]));
+        }
+        for (uint256 i = 0; i < 3; i++) {
+            assertEq(twin.signers(i), p.signers[i]);
+        }
+    }
+
+    function test_args_converterTwinCarriesEveryArgument() public {
+        Deploy.Params memory p = params();
+        (NutzDistributor d,,) = script.deploy(p, address(script));
+        bytes memory args = script.converterArgs(p, address(d));
+        NutzConverter twin = NutzConverter(payable(create(abi.encodePacked(type(NutzConverter).creationCode, args))));
+        assertEq(address(twin.DISTRIBUTOR()), address(d), "the Distributor that was deployed");
+        assertEq(twin.WETH(), p.weth);
+        assertEq(address(twin.V3_ROUTER()), p.v3Router);
+        assertEq(address(twin.V4_POOL_MANAGER()), p.v4PoolManager);
+        assertEq(address(twin.PONS_FACTORY()), p.ponsFactory);
+        assertEq(address(twin.PONS_ESCROW()), p.ponsEscrow);
+        assertEq(address(twin.PONS_HOOK()), p.ponsHook);
+        assertEq(twin.opsCap(), p.opsCapWei);
+        assertEq(twin.keeper(), p.keeper);
+        for (uint256 i = 0; i < 5; i++) {
+            assertEq(address(twin.tokens(i)), address(p.tokens[i]));
+        }
+        for (uint256 i = 0; i < 3; i++) {
+            assertEq(twin.signers(i), p.signers[i]);
+        }
+    }
+
+    function test_args_drawTwinHasTheSameCode() public {
+        (NutzDistributor d,, NutzDraw draw) = script.deploy(params(), address(script));
+        bytes memory args = script.drawArgs(address(d));
+        NutzDraw twin = NutzDraw(create(abi.encodePacked(type(NutzDraw).creationCode, args)));
+        assertEq(
+            address(twin).codehash, address(draw).codehash, "same runtime code, the Distributor immutable included"
+        );
+    }
+
+    function test_args_changeWithTheConfig() public {
+        Deploy.Params memory p = params();
+        (NutzDistributor d, NutzConverter c,) = script.deploy(p, address(script));
+        bytes memory before = script.distributorArgs(p, address(d), address(c));
+        p.pushGasBase += 1;
+        assertNotEq(keccak256(script.distributorArgs(p, address(d), address(c))), keccak256(before));
+    }
+
+    function create(bytes memory initCode) internal returns (address twin) {
+        assembly {
+            twin := create(0, add(initCode, 0x20), mload(initCode))
+        }
+        require(twin != address(0), "twin creation failed");
     }
 }

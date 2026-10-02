@@ -1,7 +1,9 @@
 {
-  "_comment": "Chain 4663 deploy parameters. TODO before launch: signers, keeper, gas constants from the week-2 fork measurement, excludedBase (the Pons locker and buyback vault; the script itself appends the Distributor, the Converter and v4PoolManager, review 2026-09 F02). MU and SPCX symbols and decimals verified on chain 2026-09-13; a human still confirms both are StockFactory beacon proxies on Blockscout. minUsdgPerEth is ~80% of spot on the day it is set (review 2026-09 F06): re-check on launch day.",
+  "_comment": "Chain 4663 deploy parameters. pushGasBase / pushGasPerLeaf measured by test/fork/PushGasFork.t.sol at block 78,359,281 (2026-10-02; docs/spec/week1-fork-measurements.md): one-Epoch entry 221,699 gas, per-transaction 292,426 amortised over a 200-entry batch, cold extra leaf 167,730; the L1 data component is the Keeper's gasPriceWei to carry, read from the dry run's receipts. excludedBase is the dead address, the Pons locker and the Pons buyback vault, read from the factory (locker(), buybackVault()) on 2026-10-02; the script itself appends the Distributor, the Converter and v4PoolManager (review 2026-09 F02). Signers and keeper are the warm, cold and KMS addresses. MU and SPCX (and SPY, NVDA) are BeaconProxy contracts created by the StockFactory proxy 0x4783c67b63de2b358ac5951a7d41f47a38f3c046 behind the shared beacon 0xe10b6f6b275de231345c20d14ab812db62151b00 -> implementation 0xb35490d6f9163DE4F80d88dc75c3516eb64C5aE2 (EIP-1967 slots and Blockscout creation records, 2026-10-02); symbols and decimals verified on chain 2026-09-13. minUsdgPerEth is ~80% of spot on the day it is set (review 2026-09 F06): re-check on launch day.",
   "excludedBase": [
-    "0x000000000000000000000000000000000000dEaD"
+    "0x000000000000000000000000000000000000dEaD",
+    "0x267444D099b10fB5Ed7c3Cc7B7c767AdcA574952",
+    "0x42df2a798f82289E177311362e8f5ccC45c1219c"
   ],
   "keeper": "0x7c3afb3a1c38a098279c77b15d96c935afb05214",
   "maxUsdgPerEth": "10000000000",
@@ -10,8 +12,8 @@
   "ponsEscrow": "0xd3AFEB2a57f70eF218Aa82451c51B2fb0416Ac9e",
   "ponsFactory": "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e",
   "ponsHook": "0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044",
-  "pushGasBase": 100000,
-  "pushGasPerLeaf": 40000,
+  "pushGasBase": 175000,
+  "pushGasPerLeaf": 170000,
   "signers": [
     "0x70e2e00474f5fa022dc6e313431a8955c4d16a36",
     "0xbF39AD4E4a570aED733bDD61b1d78E416136806e",
