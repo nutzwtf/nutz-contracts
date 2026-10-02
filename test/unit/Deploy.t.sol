@@ -60,6 +60,18 @@ contract DeployTest is Test {
         assertEq(excluded[3], p.v4PoolManager, "and the v4 PoolManager, which holds the graduated pool's NUTZ");
     }
 
+    function test_deployCore_leavesTheDrawToItsOwnStage() public {
+        // Review 2026-09, F09: the launch deploys the pair; the Draw comes later, under the scope rule (§6).
+        Deploy.Params memory p = params();
+        uint256 nonceBefore = vm.getNonce(address(script));
+        (NutzDistributor d, NutzConverter c) = script.deployCore(p, address(script));
+        assertEq(vm.getNonce(address(script)), nonceBefore + 2, "exactly two creations");
+        assertEq(d.CONVERTER(), address(c));
+        NutzDraw draw = script.deployDraw(address(d));
+        assertEq(address(draw.DISTRIBUTOR()), address(d), "the later stage names the Distributor it is given");
+        assertEq(address(d.drawContract()), address(0), "and is not wired by the script");
+    }
+
     function test_deploy_drawNamesTheDistributor() public {
         // the Draw's constructor self-test runs against the local prague precompiles here
         (NutzDistributor d,, NutzDraw draw) = script.deploy(params(), address(script));

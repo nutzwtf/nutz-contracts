@@ -46,27 +46,43 @@ contract Deploy is Script {
     error BadExcludedBase(address account);
     error RolesDiffer(address distributor, address converter);
 
+    /// @notice The launch deploy: the Distributor and the Converter. The Draw is a later stage (`runDraw`), under
+    ///         the scope rule of engineering-spec §6 (review 2026-09, F09).
     function run() external {
         Params memory p = load(string.concat(vm.projectRoot(), "/script/config/robinhood.json"));
         address deployer = msg.sender; // the --account / --sender forge broadcasts with
         vm.startBroadcast();
-        (NutzDistributor d, NutzConverter c, NutzDraw draw) = deploy(p, deployer);
+        (NutzDistributor d, NutzConverter c) = deployCore(p, deployer);
         vm.stopBroadcast();
         console.log("NutzDistributor", address(d));
         console.log("NutzConverter", address(c));
-        console.log("NutzDraw", address(draw));
         console.log("After launchAndBuy, the Keeper binds NUTZ: converter.bindNutz(NUTZ)");
-        console.log("Before the first Sunday, the Signers wire the Draw: proposeDrawContract, 48h, executeDrawContract");
+        console.log("Once gate item 10 is green: forge script ... --sig 'runDraw(address)' <distributor>");
     }
 
-    /// @dev Deploys the Distributor with the Converter address `deployer` will get on its next CREATE, then the
-    ///      Converter itself, and checks that it landed there and that both contracts carry the same Signers and
-    ///      Keeper. Two consecutive transactions from `deployer`; nothing else may slip in between. The Draw comes
-    ///      third and reverts `VerifierSelfTestFailed` on a chain without the EIP-2537 precompiles.
+    /// @notice The Draw stage, run once its gate items are green: `--sig "runDraw(address)" <distributor>`.
+    function runDraw(address distributor) external {
+        vm.startBroadcast();
+        NutzDraw draw = deployDraw(distributor);
+        vm.stopBroadcast();
+        console.log("NutzDraw", address(draw));
+        console.log("The Signers wire it: proposeDrawContract(draw, sig1, sig2), 48h, executeDrawContract(draw)");
+    }
+
+    /// @dev All three in one go, for the tests and the fork suite; the two stages live in `deployCore` and
+    ///      `deployDraw`.
     function deploy(Params memory p, address deployer)
         public
         returns (NutzDistributor d, NutzConverter c, NutzDraw draw)
     {
+        (d, c) = deployCore(p, deployer);
+        draw = deployDraw(address(d));
+    }
+
+    /// @dev Deploys the Distributor with the Converter address `deployer` will get on its next CREATE, then the
+    ///      Converter itself, and checks that both landed where predicted and that both contracts carry the same
+    ///      Signers and Keeper. Two consecutive transactions from `deployer`; nothing else may slip in between.
+    function deployCore(Params memory p, address deployer) public returns (NutzDistributor d, NutzConverter c) {
         address predictedDistributor = vm.computeCreateAddress(deployer, vm.getNonce(deployer));
         address predictedConverter = vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 1);
         d = new NutzDistributor(
@@ -98,7 +114,12 @@ contract Deploy is Script {
         check(predictedDistributor, address(d));
         check(predictedConverter, address(c));
         checkRoles(d, c);
-        draw = new NutzDraw(address(d));
+    }
+
+    /// @dev The Draw's constructor verifies quicknet round 1000 through the chain's own EIP-2537 precompiles and
+    ///      reverts `VerifierSelfTestFailed` if they are missing or the key is wrong.
+    function deployDraw(address distributor) public returns (NutzDraw draw) {
+        draw = new NutzDraw(distributor);
     }
 
     /// @dev The base Excluded list (engineering-spec §3.5): the config's entries (the dead address, the Pons

@@ -106,6 +106,7 @@ The refuters' arguments are in each issue file. Disposition (Eduar, 2026-09-29) 
 | F07 | wontfix (code); spec reworded | §2.3 and §6 state the Acorn conversion's exposure as it is | `8bda7f5` |
 | F01 | wontfix | an ABI-nonconforming token is not an issuer control; a clean revert, nothing lost | — |
 | F04 | wontfix | one instant `cancel` ceremony, no extra delay, no funds | — |
+| F09 (second pass) | accepted | the deploy script's `run()` deploys the launch pair only; `runDraw(distributor)` is the Draw's own stage, run once gate item 10 is green; `deploy()` keeps both for the tests; §10 step 2 names the two commands | `f1136df` |
 
 Each accepted finding's failing test became the regression test in the matching unit file; the two wontfix
 tests were dropped and stay readable at `5f54648`.
@@ -119,9 +120,9 @@ monotonicity survives re-requests, old requests stay fulfillable, a retired beac
 Verdict on F02/F06: correct as implemented. Nothing rated Medium or above, so the loop closes here. Taken from
 the pass: two script hardenings (both predictions asserted; a zero or duplicate config entry refused) and two
 doc nits (ADR-0004's re-commit sentence; "Skipped" vs "passed over" for a week never fulfilled), in `29da940`.
-One new Low, pre-existing and not in the patch, is open for Eduar: **F09**, the deploy script creates the Draw
-in the launch transaction while the scope rule stages it separately (no funds touched: the Draw is unwired
-until `executeDrawContract`). Three Infos recorded in the Draw report (ADR wording, the 10-minute lead on the
+One new Low, pre-existing and not in the patch: **F09**, the deploy script created the Draw in the launch
+transaction while the scope rule stages it separately (no funds touched: the Draw is unwired until
+`executeDrawContract`); accepted and fixed in the script (see the findings table). Three Infos recorded in the Draw report (ADR wording, the 10-minute lead on the
 sequencer clock, no in-contract remedy for a wrong list once locked: the week is passed over).
 
 Info-level notes, no issue opened (the reports have the detail): Distributor — `kind` not bound into the leaf;
