@@ -10,8 +10,11 @@
 #             compiler settings, metadata hash, immutables;
 #   explorers `forge verify-bytecode` and Blockscout verification (both go through Blockscout's API, which sits
 #             behind a Cloudflare challenge that refuses forge's HTTP client on chain 4663 as of 2026-10-02: a
-#             BLOCKED result means verify in the Blockscout UI, "via Sourcify"), and Sourcify verification, checked
-#             back through Sourcify's own API (an exact match binds the metadata hash).
+#             BLOCKED result means verify in the Blockscout UI, "via Sourcify"), and Sourcify verification: the
+#             build's own metadata and the exact sources it names, sent to Sourcify's v2 API, and Sourcify's
+#             verdict read back from its job (an exact match binds the metadata hash). Not `forge verify-contract
+#             --verifier sourcify`: forge rebuilds the metadata with fewer remappings than the build's (21 of 29 on
+#             2026-10-06), so its hash differs and Sourcify finds only a partial match.
 # The transaction hashes come from the committed deploy log, broadcast/Deploy.s.sol/<chain>/{run,runDraw}-latest.json.
 # --tag TAG asserts that everything feeding the bytecode (src, lib, foundry.toml, foundry.lock, remappings.txt) is
 # identical to the tag's; the tree may be a later commit (`review-2026-09-final` predates `Deploy.args` itself).
@@ -39,7 +42,7 @@ done
 [ "${#positional[@]}" -ge 2 ] || { echo "usage: $0 <distributor> <converter> [draw] [options]; --help for the rest" >&2; exit 2; }
 distributor="${positional[0]}"; converter="${positional[1]}"; draw="${positional[2]:-}"
 [ -n "$rpc" ] || { echo "no RPC url: pass --rpc or export RPC_4663" >&2; exit 2; }
-for tool in forge cast jq git curl column; do command -v "$tool" >/dev/null 2>&1 || { echo "$tool missing" >&2; exit 2; }; done
+for tool in forge cast jq git curl column mktemp; do command -v "$tool" >/dev/null 2>&1 || { echo "$tool missing" >&2; exit 2; }; done
 
 # ---- the frozen commit: nothing that feeds the bytecode may differ from what is committed
 dirty="$(git status --porcelain -- src script lib foundry.toml foundry.lock remappings.txt)"
@@ -66,6 +69,39 @@ argof() { echo "$argsout" | awk -v k="$1-args" '$1 == k {print $2; exit}'; }
 lower() { printf '%s' "$1" | tr 'A-F' 'a-f'; }
 strip0x() { local s; s="$(lower "$1")"; printf '%s' "${s#0x}"; }
 rows=(); failed=0
+work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+
+# sourcify_verify CONTRACT ADDRESS TXHASH: the build's metadata (out/, the bytes on chain per the runtime row) and every
+# source it names, to Sourcify; prints Sourcify's match for ADDRESS ("exact_match", "match") or "error: …".
+sourcify_verify() {
+  local c="${1##*:}" addr="$2" tx="$3" path body id status try
+  jq -r '.rawMetadata' "out/$c.sol/$c.json" > "$work/meta.json" || { echo "error: no out/$c.sol/$c.json"; return; }
+  : > "$work/sources.jsonl"
+  while IFS= read -r path; do
+    [ -r "$path" ] || { echo "error: the metadata names $path, absent here"; return; }
+    jq -n --arg p "$path" --rawfile s "$path" '{($p): $s}' >> "$work/sources.jsonl"
+  done < <(jq -r '.sources | keys[]' "$work/meta.json")
+  body="$work/sourcify-$c.json"
+  jq -n --slurpfile m "$work/meta.json" --slurpfile s <(jq -s 'add' "$work/sources.jsonl") --arg tx "$tx" \
+    '{metadata: $m[0], sources: $s[0], creationTransactionHash: $tx}' > "$body"
+  status="$(curl -s -m 60 -o "$work/resp.json" -w '%{http_code}' -H 'content-type: application/json' --data @"$body" \
+    "https://sourcify.dev/server/v2/verify/metadata/$chain/$addr")"
+  if [ "$status" = 202 ]; then
+    id="$(jq -r '.verificationId' "$work/resp.json")"
+    for try in 1 2 3 4 5 6 7 8 9 10 11 12; do
+      curl -s -m 30 "https://sourcify.dev/server/v2/verify/$id" > "$work/job.json"
+      [ "$(jq -r '.isJobCompleted' "$work/job.json")" = true ] && break
+      sleep 5
+    done
+    jq -r 'if .error then "error: \(.error.customCode // .error.message)" else .contract.match // "error: job not completed" end' "$work/job.json"
+  elif [ "$status" = 409 ] && [ "$(jq -r '.customCode' "$work/resp.json")" = already_verified ]; then
+    # Sourcify refuses a second submission only once creation and runtime both match exactly (its message says so);
+    # a partial record is upgraded by the 202 path. Not the contract endpoint: a CDN serves it up to an hour stale.
+    echo exact_match
+  else
+    echo "error: HTTP $status $(jq -r '.customCode // .message // empty' "$work/resp.json" 2>/dev/null)"
+  fi
+}
 
 check() { # label address contract broadcast-file
   local label="$1" addr="$2" contract="$3" bfile="$4"
@@ -125,17 +161,12 @@ check() { # label address contract broadcast-file
       1:*) case "$out" in *"did not match"*|*"mismatch"*) vb="FAIL"; failed=1;; *) vb="PASS";; esac;;
       *) vb="FAIL(${out##*$'\n'})"; failed=1;;
     esac
-    out="$(forge verify-contract "$addr" "$contract" --chain-id "$chain" --verifier sourcify --constructor-args "$args" --watch 2>&1)"
-    local match="" try # Sourcify's own verdict, not forge's output; a few tries, the job can lag the submission
-    for try in 1 2 3 4; do
-      match="$(curl -s -m 30 "https://sourcify.dev/server/v2/contract/$chain/$addr" | jq -r '.match // empty' 2>/dev/null)"
-      [ -n "$match" ] && break
-      sleep 5
-    done
+    local match=""
+    if [ -n "$hash" ]; then match="$(sourcify_verify "$contract" "$addr" "$hash")"; else match="error: no creation transaction"; fi
     case "$match" in
       exact_match) sourcify="PASS(exact_match)";;
       match) sourcify="PARTIAL(match, metadata not bound)"; failed=1;;
-      *) sourcify="FAIL(${out##*$'\n'})"; failed=1;;
+      *) sourcify="FAIL($match)"; failed=1;;
     esac
     ok=0
     out="$(forge verify-contract "$addr" "$contract" --chain-id "$chain" --verifier blockscout \
