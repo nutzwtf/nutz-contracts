@@ -2,7 +2,7 @@
 
 The NUTZ Nut Vault contracts have no owner, no upgrade path and no pause. If you find a way to take or lock funds, the only people who can act are the three Signers (off-chain: stop signing, void a Root) and whitehats under the Safe Harbor below. Tell us fast and we will act fast.
 
-**Status:** not externally audited. The internal review is in progress; its summary (`docs/security/internal-review-2026-09.md`) and the frozen commit it covers will be linked here when it lands.
+**Status:** not externally audited. The internal review is complete: its summary is [docs/security/internal-review-2026-09.md](docs/security/internal-review-2026-09.md), two passes at tags `review-2026-09-rc1` (`74d724c`) and `review-2026-09-final` (`c6d67cb`), nothing open at Medium or above. The contracts under `src/` are unchanged since `c6d67cb`; the public tag `review-2026-09-public` carries the same source. Internally reviewed at `c6d67cb`; not externally audited; the deployed commit lands in the table below at deploy.
 
 ## Contact
 
